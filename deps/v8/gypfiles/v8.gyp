@@ -25,6 +25,7 @@
       "../src/builtins/array-slice.tq",
       "../src/builtins/array-splice.tq",
       "../src/builtins/array-unshift.tq",
+      "../src/builtins/collections.tq",
       "../src/builtins/typed-array.tq",
       "../src/builtins/data-view.tq",
       "../src/builtins/iterator.tq",
@@ -34,16 +35,17 @@
     'torque_namespaces': [
       "base",
       "array",
+      "collections",
       "iterator",
       "typed-array",
       "data-view",
       "test",
     ],
     # Since there is no foreach in GYP we manualy unroll the following:
-    # foreach(module, torque_namespaces) {
+    # foreach(namespace, torque_namespaces) {
     #   outputs += [
-    #     "$target_gen_dir/torque-generated/builtins-$module-from-dsl-gen.cc",
-    #     "$target_gen_dir/torque-generated/builtins-$module-from-dsl-gen.h",
+    #     "$target_gen_dir/torque-generated/builtins-$namespace-from-dsl-gen.cc",
+    #     "$target_gen_dir/torque-generated/builtins-$namespace-from-dsl-gen.h",
     #   ]
     # }
     'torque_outputs': [
@@ -51,6 +53,8 @@
       '<(SHARED_INTERMEDIATE_DIR)/torque-generated/builtins-base-from-dsl-gen.h',
       '<(SHARED_INTERMEDIATE_DIR)/torque-generated/builtins-array-from-dsl-gen.cc',
       '<(SHARED_INTERMEDIATE_DIR)/torque-generated/builtins-array-from-dsl-gen.h',
+      '<(SHARED_INTERMEDIATE_DIR)/torque-generated/builtins-collections-from-dsl-gen.cc',
+      '<(SHARED_INTERMEDIATE_DIR)/torque-generated/builtins-collections-from-dsl-gen.h',
       '<(SHARED_INTERMEDIATE_DIR)/torque-generated/builtins-iterator-from-dsl-gen.cc',
       '<(SHARED_INTERMEDIATE_DIR)/torque-generated/builtins-iterator-from-dsl-gen.h',
       '<(SHARED_INTERMEDIATE_DIR)/torque-generated/builtins-typed-array-from-dsl-gen.cc',
@@ -142,6 +146,7 @@
               'v8_target_cpu=<(v8_target_arch)',
               'v8_use_snapshot=<(v8_use_snapshot)',
               'v8_enable_embedded_builtins=<(v8_enable_embedded_builtins)',
+              'v8_enable_jitless_mode=<(v8_enable_jitless_mode)',
               'v8_enable_verify_csa=<(v8_enable_verify_csa)',
               'v8_enable_lite_mode=<(v8_enable_lite_mode)',
             ]
@@ -444,11 +449,11 @@
           'conditions': [
             ['v8_enable_embedded_builtins == "true"', {
               # In this case we use `embedded_variant "Default"`
-              # and `suffix = ''` for the template `embedded${suffix}.cc`.
-              'outputs': [ '<(INTERMEDIATE_DIR)/embedded.cc' ],
+              # and `suffix = ''` for the template `embedded${suffix}.S`.
+              'outputs': [ '<(INTERMEDIATE_DIR)/embedded.S' ],
               'variables': {
                 'mksnapshot_flags':  [
-                  '--embedded_src', '<(INTERMEDIATE_DIR)/embedded.cc',
+                  '--embedded_src', '<(INTERMEDIATE_DIR)/embedded.S',
                   '--embedded_variant', 'Default',
                 ],
               },
@@ -619,13 +624,10 @@
         '../src/ast/ast-value-factory.h',
         '../src/ast/ast.cc',
         '../src/ast/ast.h',
-        '../src/ast/context-slot-cache.cc',
-        '../src/ast/context-slot-cache.h',
         '../src/ast/modules.cc',
         '../src/ast/modules.h',
         '../src/ast/prettyprinter.cc',
         '../src/ast/prettyprinter.h',
-        '../src/ast/scopes-inl.h',
         '../src/ast/scopes.cc',
         '../src/ast/scopes.h',
         '../src/ast/variables.cc',
@@ -1124,8 +1126,6 @@
         '../src/icu_util.h',
         '../src/identity-map.cc',
         '../src/identity-map.h',
-        '../src/instruction-stream.cc',
-        '../src/instruction-stream.h',
         '../src/interface-descriptors.cc',
         '../src/interface-descriptors.h',
         '../src/interpreter/block-coverage-builder.h',
@@ -1500,7 +1500,8 @@
         '../src/snapshot/deserializer-allocator.h',
         '../src/snapshot/deserializer.cc',
         '../src/snapshot/deserializer.h',
-        '../src/snapshot/macros.h',
+        '../src/snapshot/embedded-data.cc',
+        '../src/snapshot/embedded-data.h',
         '../src/snapshot/natives-common.cc',
         '../src/snapshot/natives.h',
         '../src/snapshot/object-deserializer.cc',
@@ -2839,6 +2840,8 @@
         '<(DEPTH)',
       ],
       'sources': [
+        '../src/snapshot/embedded-file-writer.cc',
+        '../src/snapshot/embedded-file-writer.h',
         '../src/snapshot/mksnapshot.cc',
       ],
       'conditions': [

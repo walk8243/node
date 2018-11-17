@@ -97,7 +97,7 @@
       ],
       'action': [
         'python',
-        '<(protocol_path)/CheckProtocolCompatibility.py',
+        '<(protocol_path)/check_protocol_compatibility.py',
         '--stamp', '<@(_outputs)',
         '<(inspector_path)/js_protocol.json',
       ],

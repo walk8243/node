@@ -51,6 +51,12 @@
 
     'v8_enable_gdbjit%': 0,
 
+    # Build-time flag for enabling nojit mode.
+    # TODO(v8:7777): Remove the build-time flag once the --jitless runtime flag
+    # does everything we need.
+    'v8_enable_jitless_mode%': 0,
+
+    # Enable code-generation-time checking of types in the CodeStubAssembler.
     'v8_enable_verify_csa%': 0,
 
     'v8_object_print%': 0,
@@ -127,8 +133,8 @@
 
   'conditions': [
     # V8's predicate inverted since we default to 'true' and set 'false' for unsupported cases.
-    #      v8_use_snapshot         &&  !is_aix &&  (  !is_win || is_clang)
-    ['not (v8_use_snapshot=="true" and OS!="aix" and (OS!="win" or clang==1))', {
+    #      !is_aix
+    ['not (OS!="aix")', {
       'variables': {
         'v8_enable_embedded_builtins': 'false',
       }
@@ -211,6 +217,9 @@
           'V8_EMBEDDED_BUILTINS',
           'V8_EMBEDDED_BYTECODE_HANDLERS',
         ],
+      }],
+      ['v8_enable_jitless_mode==1', {
+        'defines': ['V8_JITLESS_MODE',],
       }],
     ],  # conditions
     'defines': [
