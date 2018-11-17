@@ -739,7 +739,8 @@ Local<Array> SyncProcessRunner::BuildOutputArray() {
 }
 
 Maybe<int> SyncProcessRunner::ParseOptions(Local<Value> js_value) {
-  HandleScope scope(env()->isolate());
+  Isolate* isolate = env()->isolate();
+  HandleScope scope(isolate);
   int r;
 
   if (!js_value->IsObject()) return Just<int>(UV_EINVAL);
@@ -796,19 +797,19 @@ Maybe<int> SyncProcessRunner::ParseOptions(Local<Value> js_value) {
 
   Local<Value> js_detached =
       js_options->Get(context, env()->detached_string()).ToLocalChecked();
-  if (js_detached->BooleanValue(context).FromJust())
+  if (js_detached->BooleanValue(isolate))
     uv_process_options_.flags |= UV_PROCESS_DETACHED;
 
   Local<Value> js_win_hide =
       js_options->Get(context, env()->windows_hide_string()).ToLocalChecked();
-  if (js_win_hide->BooleanValue(context).FromJust())
+  if (js_win_hide->BooleanValue(isolate))
     uv_process_options_.flags |= UV_PROCESS_WINDOWS_HIDE;
 
   Local<Value> js_wva =
       js_options->Get(context, env()->windows_verbatim_arguments_string())
           .ToLocalChecked();
 
-  if (js_wva->BooleanValue(context).FromJust())
+  if (js_wva->BooleanValue(isolate))
     uv_process_options_.flags |= UV_PROCESS_WINDOWS_VERBATIM_ARGUMENTS;
 
   Local<Value> js_timeout =
@@ -880,6 +881,7 @@ int SyncProcessRunner::ParseStdioOptions(Local<Value> js_value) {
 
 int SyncProcessRunner::ParseStdioOption(int child_fd,
                                         Local<Object> js_stdio_option) {
+  Isolate* isolate = env()->isolate();
   Local<Context> context = env()->context();
   Local<Value> js_type =
       js_stdio_option->Get(context, env()->type_string()).ToLocalChecked();
@@ -892,10 +894,11 @@ int SyncProcessRunner::ParseStdioOption(int child_fd,
     Local<String> ws = env()->writable_string();
 
     bool readable = js_stdio_option->Get(context, rs)
-        .ToLocalChecked()->BooleanValue(context).FromJust();
-    bool writable =
-        js_stdio_option->Get(context, ws)
-        .ToLocalChecked()->BooleanValue(context).FromJust();
+                        .ToLocalChecked()
+                        ->BooleanValue(isolate);
+    bool writable = js_stdio_option->Get(context, ws)
+                        .ToLocalChecked()
+                        ->BooleanValue(isolate);
 
     uv_buf_t buf = uv_buf_init(nullptr, 0);
 
