@@ -7,7 +7,6 @@
 
 #include "src/allocation.h"
 #include "src/char-predicates.h"
-#include "src/unicode-cache.h"
 
 namespace v8 {
 namespace internal {
@@ -47,14 +46,9 @@ class DateParser : public AllStatic {
 
   // InputReader provides basic string parsing and character classification.
   template <typename Char>
-  class InputReader BASE_EMBEDDED {
+  class InputReader {
    public:
-    InputReader(UnicodeCache* unicode_cache, Vector<Char> s)
-        : index_(0),
-          buffer_(s),
-          unicode_cache_(unicode_cache) {
-      Next();
-    }
+    explicit InputReader(Vector<Char> s) : index_(0), buffer_(s) { Next(); }
 
     int position() { return index_; }
 
@@ -116,7 +110,6 @@ class DateParser : public AllStatic {
     int index_;
     Vector<Char> buffer_;
     uint32_t ch_;
-    UnicodeCache* unicode_cache_;
   };
 
   enum KeywordType {
@@ -268,7 +261,7 @@ class DateParser : public AllStatic {
     static const int8_t array[][kEntrySize];
   };
 
-  class TimeZoneComposer BASE_EMBEDDED {
+  class TimeZoneComposer {
    public:
     TimeZoneComposer() : sign_(kNone), hour_(kNone), minute_(kNone) {}
     void Set(int offset_in_hours) {
@@ -291,7 +284,7 @@ class DateParser : public AllStatic {
     int minute_;
   };
 
-  class TimeComposer BASE_EMBEDDED {
+  class TimeComposer {
    public:
     TimeComposer() : index_(0), hour_offset_(kNone) {}
     bool IsEmpty() const { return index_ == 0; }
@@ -325,7 +318,7 @@ class DateParser : public AllStatic {
     int hour_offset_;
   };
 
-  class DayComposer BASE_EMBEDDED {
+  class DayComposer {
    public:
     DayComposer() : index_(0), named_month_(kNone), is_iso_date_(false) {}
     bool IsEmpty() const { return index_ == 0; }

@@ -13,6 +13,8 @@
 namespace v8 {
 namespace internal {
 
+class JSPromise;
+
 // Struct to hold state required for PromiseReactionJob. See the comment on the
 // PromiseReaction below for details on how this is being managed to reduce the
 // memory and allocation overhead. This is the base class for the concrete
@@ -25,9 +27,10 @@ namespace internal {
 class PromiseReactionJobTask : public Microtask {
  public:
   DECL_ACCESSORS(argument, Object)
-  DECL_ACCESSORS(context, Context)
+  DECL_ACCESSORS2(context, Context)
   DECL_ACCESSORS(handler, HeapObject)
-  // [promise_or_capability]: Either a JSPromise or a PromiseCapability.
+  // [promise_or_capability]: Either a JSPromise (in case of native promises),
+  // a PromiseCapability (general case), or undefined (in case of await).
   DECL_ACCESSORS(promise_or_capability, HeapObject)
 
   static const int kArgumentOffset = Microtask::kHeaderSize;
@@ -71,7 +74,7 @@ class PromiseRejectReactionJobTask : public PromiseReactionJobTask {
 // A container struct to hold state required for PromiseResolveThenableJob.
 class PromiseResolveThenableJobTask : public Microtask {
  public:
-  DECL_ACCESSORS(context, Context)
+  DECL_ACCESSORS2(context, Context)
   DECL_ACCESSORS(promise_to_resolve, JSPromise)
   DECL_ACCESSORS(then, JSReceiver)
   DECL_ACCESSORS(thenable, JSReceiver)
@@ -122,10 +125,8 @@ class PromiseCapability : public Struct {
 //
 // The PromiseReaction::promise_or_capability field can either hold a JSPromise
 // instance (in the fast case of a native promise) or a PromiseCapability in
-// case of a Promise subclass.
-//
-// We need to keep the context in the PromiseReaction so that we can run
-// the default handlers (in case they are undefined) in the proper context.
+// case of a Promise subclass. In case of await it can also be undefined if
+// PromiseHooks are disabled (see https://github.com/tc39/ecma262/pull/1146).
 //
 // The PromiseReaction objects form a singly-linked list, terminated by
 // Smi 0. On the JSPromise instance they are linked in reverse order,
@@ -138,6 +139,8 @@ class PromiseReaction : public Struct {
   DECL_ACCESSORS(next, Object)
   DECL_ACCESSORS(reject_handler, HeapObject)
   DECL_ACCESSORS(fulfill_handler, HeapObject)
+  // [promise_or_capability]: Either a JSPromise (in case of native promises),
+  // a PromiseCapability (general case), or undefined (in case of await).
   DECL_ACCESSORS(promise_or_capability, HeapObject)
 
   static const int kNextOffset = Struct::kHeaderSize;

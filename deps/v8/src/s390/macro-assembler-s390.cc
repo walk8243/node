@@ -13,16 +13,23 @@
 #include "src/callable.h"
 #include "src/code-factory.h"
 #include "src/code-stubs.h"
+#include "src/counters.h"
 #include "src/debug/debug.h"
 #include "src/external-reference-table.h"
 #include "src/frames-inl.h"
-#include "src/instruction-stream.h"
+#include "src/macro-assembler.h"
+#include "src/objects/smi.h"
 #include "src/register-configuration.h"
 #include "src/runtime/runtime.h"
+#include "src/snapshot/embedded-data.h"
 #include "src/snapshot/snapshot.h"
 #include "src/wasm/wasm-code-manager.h"
 
+// Satisfy cpplint check, but don't include platform-specific header. It is
+// included recursively via macro-assembler.h.
+#if 0
 #include "src/s390/macro-assembler-s390.h"
+#endif
 
 namespace v8 {
 namespace internal {
@@ -122,15 +129,14 @@ int TurboAssembler::PopCallerSaved(SaveFPRegsMode fp_mode, Register exclusion1,
 
 void TurboAssembler::LoadFromConstantsTable(Register destination,
                                             int constant_index) {
-  DCHECK(isolate()->heap()->RootCanBeTreatedAsConstant(
-      Heap::kBuiltinsConstantsTableRootIndex));
+  DCHECK(RootsTable::IsImmortalImmovable(RootIndex::kBuiltinsConstantsTable));
 
   const uint32_t offset =
       FixedArray::kHeaderSize + constant_index * kPointerSize - kHeapObjectTag;
 
   CHECK(is_uint19(offset));
   DCHECK_NE(destination, r0);
-  LoadRoot(destination, Heap::kBuiltinsConstantsTableRootIndex);
+  LoadRoot(destination, RootIndex::kBuiltinsConstantsTable);
   LoadP(destination, MemOperand(destination, offset), r1);
 }
 
@@ -294,7 +300,7 @@ void TurboAssembler::Push(Handle<HeapObject> handle) {
   push(r0);
 }
 
-void TurboAssembler::Push(Smi* smi) {
+void TurboAssembler::Push(Smi smi) {
   mov(r0, Operand(smi));
   push(r0);
 }
@@ -429,9 +435,10 @@ void TurboAssembler::MultiPopDoubles(RegList dregs, Register location) {
   AddP(location, location, Operand(stack_offset));
 }
 
-void TurboAssembler::LoadRoot(Register destination, Heap::RootListIndex index,
+void TurboAssembler::LoadRoot(Register destination, RootIndex index,
                               Condition) {
-  LoadP(destination, MemOperand(kRootRegister, RootRegisterOffset(index)), r0);
+  LoadP(destination,
+        MemOperand(kRootRegister, RootRegisterOffsetForRootIndex(index)), r0);
 }
 
 void MacroAssembler::RecordWriteField(Register object, int offset,
@@ -500,26 +507,42 @@ void TurboAssembler::RestoreRegisters(RegList registers) {
 void TurboAssembler::CallRecordWriteStub(
     Register object, Register address,
     RememberedSetAction remembered_set_action, SaveFPRegsMode fp_mode) {
+  CallRecordWriteStub(
+      object, address, remembered_set_action, fp_mode,
+      isolate()->builtins()->builtin_handle(Builtins::kRecordWrite),
+      kNullAddress);
+}
+
+void TurboAssembler::CallRecordWriteStub(
+    Register object, Register address,
+    RememberedSetAction remembered_set_action, SaveFPRegsMode fp_mode,
+    Address wasm_target) {
+  CallRecordWriteStub(object, address, remembered_set_action, fp_mode,
+                      Handle<Code>::null(), wasm_target);
+}
+
+void TurboAssembler::CallRecordWriteStub(
+    Register object, Register address,
+    RememberedSetAction remembered_set_action, SaveFPRegsMode fp_mode,
+    Handle<Code> code_target, Address wasm_target) {
+  DCHECK_NE(code_target.is_null(), wasm_target == kNullAddress);
   // TODO(albertnetymk): For now we ignore remembered_set_action and fp_mode,
   // i.e. always emit remember set and save FP registers in RecordWriteStub. If
   // large performance regression is observed, we should use these values to
   // avoid unnecessary work.
 
-  Callable const callable =
-      Builtins::CallableFor(isolate(), Builtins::kRecordWrite);
-  RegList registers = callable.descriptor().allocatable_registers();
+  RecordWriteDescriptor descriptor;
+  RegList registers = descriptor.allocatable_registers();
 
   SaveRegisters(registers);
-  Register object_parameter(callable.descriptor().GetRegisterParameter(
-      RecordWriteDescriptor::kObject));
+  Register object_parameter(
+      descriptor.GetRegisterParameter(RecordWriteDescriptor::kObject));
   Register slot_parameter(
-      callable.descriptor().GetRegisterParameter(RecordWriteDescriptor::kSlot));
-  Register isolate_parameter(callable.descriptor().GetRegisterParameter(
-      RecordWriteDescriptor::kIsolate));
-  Register remembered_set_parameter(callable.descriptor().GetRegisterParameter(
-      RecordWriteDescriptor::kRememberedSet));
-  Register fp_mode_parameter(callable.descriptor().GetRegisterParameter(
-      RecordWriteDescriptor::kFPMode));
+      descriptor.GetRegisterParameter(RecordWriteDescriptor::kSlot));
+  Register remembered_set_parameter(
+      descriptor.GetRegisterParameter(RecordWriteDescriptor::kRememberedSet));
+  Register fp_mode_parameter(
+      descriptor.GetRegisterParameter(RecordWriteDescriptor::kFPMode));
 
   Push(object);
   Push(address);
@@ -527,10 +550,13 @@ void TurboAssembler::CallRecordWriteStub(
   Pop(slot_parameter);
   Pop(object_parameter);
 
-  Move(isolate_parameter, ExternalReference::isolate_address(isolate()));
   Move(remembered_set_parameter, Smi::FromEnum(remembered_set_action));
   Move(fp_mode_parameter, Smi::FromEnum(fp_mode));
-  Call(callable.code(), RelocInfo::CODE_TARGET);
+  if (code_target.is_null()) {
+    Call(wasm_target, RelocInfo::WASM_STUB_CALL);
+  } else {
+    Call(code_target, RelocInfo::CODE_TARGET);
+  }
 
   RestoreRegisters(registers);
 }
@@ -1388,7 +1414,7 @@ void MacroAssembler::InvokeFunctionCode(Register function, Register new_target,
 
   // Clear the new.target register if not given.
   if (!new_target.is_valid()) {
-    LoadRoot(r5, Heap::kUndefinedValueRootIndex);
+    LoadRoot(r5, RootIndex::kUndefinedValue);
   }
 
   Label done;
@@ -1476,7 +1502,7 @@ void MacroAssembler::PushStackHandler() {
   lay(sp, MemOperand(sp, -StackHandlerConstants::kSize));
 
   // Store padding.
-  mov(r0, Operand(Smi::kZero));
+  lghi(r0, Operand::Zero());
   StoreP(r0, MemOperand(sp));  // Padding.
 
   // Copy the old handler into the next handler slot.
@@ -1515,8 +1541,8 @@ void MacroAssembler::CompareInstanceType(Register map, Register type_reg,
   CmpP(type_reg, Operand(type));
 }
 
-void MacroAssembler::CompareRoot(Register obj, Heap::RootListIndex index) {
-  CmpP(obj, MemOperand(kRootRegister, RootRegisterOffset(index)));
+void MacroAssembler::CompareRoot(Register obj, RootIndex index) {
+  CmpP(obj, MemOperand(kRootRegister, RootRegisterOffsetForRootIndex(index)));
 }
 
 void MacroAssembler::CallStub(CodeStub* stub, Condition cond) {
@@ -1526,7 +1552,12 @@ void MacroAssembler::CallStub(CodeStub* stub, Condition cond) {
 
 void TurboAssembler::CallStubDelayed(CodeStub* stub) {
   DCHECK(AllowThisStubCall(stub));  // Stub calls are not allowed in some stubs.
-  call(stub);
+  if (isolate() != nullptr && isolate()->ShouldLoadConstantsFromRootList()) {
+    stub->set_isolate(isolate());
+    Call(stub->GetCode(), RelocInfo::CODE_TARGET);
+  } else {
+    call(stub);
+  }
 }
 
 void MacroAssembler::TailCallStub(CodeStub* stub, Condition cond) {
@@ -1651,7 +1682,7 @@ void MacroAssembler::JumpToInstructionStream(Address entry) {
 
 void MacroAssembler::LoadWeakValue(Register out, Register in,
                                    Label* target_if_cleared) {
-  CmpP(in, Operand(kClearedWeakHeapObject));
+  Cmp32(in, Operand(kClearedWeakHeapObjectLower32));
   beq(target_if_cleared);
 
   AndP(out, in, Operand(~kWeakHeapObjectMask));
@@ -1825,6 +1856,10 @@ void MacroAssembler::AssertGeneratorObject(Register object) {
   CompareInstanceType(map, instance_type, JS_GENERATOR_OBJECT_TYPE);
   beq(&do_check);
 
+  // Check if JSAsyncFunctionObject (See MacroAssembler::CompareInstanceType)
+  CmpP(instance_type, Operand(JS_ASYNC_FUNCTION_OBJECT_TYPE));
+  beq(&do_check);
+
   // Check if JSAsyncGeneratorObject (See MacroAssembler::CompareInstanceType)
   CmpP(instance_type, Operand(JS_ASYNC_GENERATOR_OBJECT_TYPE));
 
@@ -1839,7 +1874,7 @@ void MacroAssembler::AssertUndefinedOrAllocationSite(Register object,
   if (emit_debug_code()) {
     Label done_checking;
     AssertNotSmi(object);
-    CompareRoot(object, Heap::kUndefinedValueRootIndex);
+    CompareRoot(object, RootIndex::kUndefinedValue);
     beq(&done_checking, Label::kNear);
     LoadP(scratch, FieldMemOperand(object, HeapObject::kMapOffset));
     CompareInstanceType(scratch, scratch, ALLOCATION_SITE_TYPE);
@@ -2882,6 +2917,12 @@ void TurboAssembler::LoadAndSub32(Register dst, Register src,
   laa(dst, dst, opnd);
 }
 
+void TurboAssembler::LoadAndSub64(Register dst, Register src,
+                                  const MemOperand& opnd) {
+  lcgr(dst, src);
+  laag(dst, dst, opnd);
+}
+
 //----------------------------------------------------------------------------
 //  Subtract Logical Instructions
 //----------------------------------------------------------------------------
@@ -3372,6 +3413,12 @@ void TurboAssembler::CmpAndSwap(Register old_val, Register new_val,
   }
 }
 
+void TurboAssembler::CmpAndSwap64(Register old_val, Register new_val,
+                                  const MemOperand& opnd) {
+  DCHECK(is_int20(opnd.offset()));
+  csg(old_val, new_val, opnd);
+}
+
 //-----------------------------------------------------------------------------
 // Compare Logical Helpers
 //-----------------------------------------------------------------------------
@@ -3460,8 +3507,8 @@ void TurboAssembler::LoadIntLiteral(Register dst, int value) {
   Load(dst, Operand(value));
 }
 
-void TurboAssembler::LoadSmiLiteral(Register dst, Smi* smi) {
-  intptr_t value = reinterpret_cast<intptr_t>(smi);
+void TurboAssembler::LoadSmiLiteral(Register dst, Smi smi) {
+  intptr_t value = static_cast<intptr_t>(smi.ptr());
 #if V8_TARGET_ARCH_S390X
   DCHECK_EQ(value & 0xFFFFFFFF, 0);
   // The smi value is loaded in upper 32-bits.  Lower 32-bit are zeros.
@@ -3502,10 +3549,10 @@ void TurboAssembler::LoadFloat32Literal(DoubleRegister result, float value,
   LoadDoubleLiteral(result, int_val, scratch);
 }
 
-void TurboAssembler::CmpSmiLiteral(Register src1, Smi* smi, Register scratch) {
+void TurboAssembler::CmpSmiLiteral(Register src1, Smi smi, Register scratch) {
 #if V8_TARGET_ARCH_S390X
   if (CpuFeatures::IsSupported(DISTINCT_OPS)) {
-    cih(src1, Operand(reinterpret_cast<intptr_t>(smi) >> 32));
+    cih(src1, Operand(static_cast<intptr_t>(smi.ptr()) >> 32));
   } else {
     LoadSmiLiteral(scratch, smi);
     cgr(src1, scratch);
@@ -3513,62 +3560,6 @@ void TurboAssembler::CmpSmiLiteral(Register src1, Smi* smi, Register scratch) {
 #else
   // CFI takes 32-bit immediate.
   cfi(src1, Operand(smi));
-#endif
-}
-
-void TurboAssembler::CmpLogicalSmiLiteral(Register src1, Smi* smi,
-                                          Register scratch) {
-#if V8_TARGET_ARCH_S390X
-  if (CpuFeatures::IsSupported(DISTINCT_OPS)) {
-    clih(src1, Operand(reinterpret_cast<intptr_t>(smi) >> 32));
-  } else {
-    LoadSmiLiteral(scratch, smi);
-    clgr(src1, scratch);
-  }
-#else
-  // CLFI takes 32-bit immediate
-  clfi(src1, Operand(smi));
-#endif
-}
-
-void TurboAssembler::AddSmiLiteral(Register dst, Register src, Smi* smi,
-                                   Register scratch) {
-#if V8_TARGET_ARCH_S390X
-  if (CpuFeatures::IsSupported(DISTINCT_OPS)) {
-    if (dst != src) LoadRR(dst, src);
-    aih(dst, Operand(reinterpret_cast<intptr_t>(smi) >> 32));
-  } else {
-    LoadSmiLiteral(scratch, smi);
-    AddP(dst, src, scratch);
-  }
-#else
-  AddP(dst, src, Operand(reinterpret_cast<intptr_t>(smi)));
-#endif
-}
-
-void TurboAssembler::SubSmiLiteral(Register dst, Register src, Smi* smi,
-                                   Register scratch) {
-#if V8_TARGET_ARCH_S390X
-  if (CpuFeatures::IsSupported(DISTINCT_OPS)) {
-    if (dst != src) LoadRR(dst, src);
-    aih(dst, Operand((-reinterpret_cast<intptr_t>(smi)) >> 32));
-  } else {
-    LoadSmiLiteral(scratch, smi);
-    SubP(dst, src, scratch);
-  }
-#else
-  AddP(dst, src, Operand(-(reinterpret_cast<intptr_t>(smi))));
-#endif
-}
-
-void TurboAssembler::AndSmiLiteral(Register dst, Register src, Smi* smi) {
-  if (dst != src) LoadRR(dst, src);
-#if V8_TARGET_ARCH_S390X
-  DCHECK_EQ(reinterpret_cast<intptr_t>(smi) & 0xFFFFFFFF, 0);
-  int value = static_cast<int>(reinterpret_cast<intptr_t>(smi) >> 32);
-  nihf(dst, Operand(value));
-#else
-  nilf(dst, Operand(reinterpret_cast<int>(smi)));
 #endif
 }
 

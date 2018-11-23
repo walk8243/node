@@ -120,6 +120,125 @@ Callable CodeFactory::StoreOwnICInOptimizedCode(Isolate* isolate) {
   return Callable(BUILTIN_CODE(isolate, StoreIC), StoreWithVectorDescriptor{});
 }
 
+Callable CodeFactory::KeyedStoreIC_SloppyArguments(Isolate* isolate,
+                                                   KeyedAccessStoreMode mode) {
+  Builtins::Name builtin_index;
+  switch (mode) {
+    case STANDARD_STORE:
+      builtin_index = Builtins::kKeyedStoreIC_SloppyArguments_Standard;
+      break;
+    case STORE_AND_GROW_NO_TRANSITION_HANDLE_COW:
+      builtin_index =
+          Builtins::kKeyedStoreIC_SloppyArguments_GrowNoTransitionHandleCOW;
+      break;
+    case STORE_NO_TRANSITION_IGNORE_OUT_OF_BOUNDS:
+      builtin_index =
+          Builtins::kKeyedStoreIC_SloppyArguments_NoTransitionIgnoreOOB;
+      break;
+    case STORE_NO_TRANSITION_HANDLE_COW:
+      builtin_index =
+          Builtins::kKeyedStoreIC_SloppyArguments_NoTransitionHandleCOW;
+      break;
+    default:
+      UNREACHABLE();
+  }
+  return isolate->builtins()->CallableFor(isolate, builtin_index);
+}
+
+Callable CodeFactory::KeyedStoreIC_Slow(Isolate* isolate,
+                                        KeyedAccessStoreMode mode) {
+  Builtins::Name builtin_index;
+  switch (mode) {
+    case STANDARD_STORE:
+      builtin_index = Builtins::kKeyedStoreIC_Slow_Standard;
+      break;
+    case STORE_AND_GROW_NO_TRANSITION_HANDLE_COW:
+      builtin_index = Builtins::kKeyedStoreIC_Slow_GrowNoTransitionHandleCOW;
+      break;
+    case STORE_NO_TRANSITION_IGNORE_OUT_OF_BOUNDS:
+      builtin_index = Builtins::kKeyedStoreIC_Slow_NoTransitionIgnoreOOB;
+      break;
+    case STORE_NO_TRANSITION_HANDLE_COW:
+      builtin_index = Builtins::kKeyedStoreIC_Slow_NoTransitionHandleCOW;
+      break;
+    default:
+      UNREACHABLE();
+  }
+  return isolate->builtins()->CallableFor(isolate, builtin_index);
+}
+
+Callable CodeFactory::StoreInArrayLiteralIC_Slow(Isolate* isolate,
+                                                 KeyedAccessStoreMode mode) {
+  Builtins::Name builtin_index;
+  switch (mode) {
+    case STANDARD_STORE:
+      builtin_index = Builtins::kStoreInArrayLiteralIC_Slow_Standard;
+      break;
+    case STORE_AND_GROW_NO_TRANSITION_HANDLE_COW:
+      builtin_index =
+          Builtins::kStoreInArrayLiteralIC_Slow_GrowNoTransitionHandleCOW;
+      break;
+    case STORE_NO_TRANSITION_IGNORE_OUT_OF_BOUNDS:
+      builtin_index =
+          Builtins::kStoreInArrayLiteralIC_Slow_NoTransitionIgnoreOOB;
+      break;
+    case STORE_NO_TRANSITION_HANDLE_COW:
+      builtin_index =
+          Builtins::kStoreInArrayLiteralIC_Slow_NoTransitionHandleCOW;
+      break;
+    default:
+      UNREACHABLE();
+  }
+  return isolate->builtins()->CallableFor(isolate, builtin_index);
+}
+
+Callable CodeFactory::ElementsTransitionAndStore(Isolate* isolate,
+                                                 KeyedAccessStoreMode mode) {
+  Builtins::Name builtin_index;
+  switch (mode) {
+    case STANDARD_STORE:
+      builtin_index = Builtins::kElementsTransitionAndStore_Standard;
+      break;
+    case STORE_AND_GROW_NO_TRANSITION_HANDLE_COW:
+      builtin_index =
+          Builtins::kElementsTransitionAndStore_GrowNoTransitionHandleCOW;
+      break;
+    case STORE_NO_TRANSITION_IGNORE_OUT_OF_BOUNDS:
+      builtin_index =
+          Builtins::kElementsTransitionAndStore_NoTransitionIgnoreOOB;
+      break;
+    case STORE_NO_TRANSITION_HANDLE_COW:
+      builtin_index =
+          Builtins::kElementsTransitionAndStore_NoTransitionHandleCOW;
+      break;
+    default:
+      UNREACHABLE();
+  }
+  return isolate->builtins()->CallableFor(isolate, builtin_index);
+}
+
+Callable CodeFactory::StoreFastElementIC(Isolate* isolate,
+                                         KeyedAccessStoreMode mode) {
+  Builtins::Name builtin_index;
+  switch (mode) {
+    case STANDARD_STORE:
+      builtin_index = Builtins::kStoreFastElementIC_Standard;
+      break;
+    case STORE_AND_GROW_NO_TRANSITION_HANDLE_COW:
+      builtin_index = Builtins::kStoreFastElementIC_GrowNoTransitionHandleCOW;
+      break;
+    case STORE_NO_TRANSITION_IGNORE_OUT_OF_BOUNDS:
+      builtin_index = Builtins::kStoreFastElementIC_NoTransitionIgnoreOOB;
+      break;
+    case STORE_NO_TRANSITION_HANDLE_COW:
+      builtin_index = Builtins::kStoreFastElementIC_NoTransitionHandleCOW;
+      break;
+    default:
+      UNREACHABLE();
+  }
+  return isolate->builtins()->CallableFor(isolate, builtin_index);
+}
+
 // static
 Callable CodeFactory::BinaryOperation(Isolate* isolate, Operation op) {
   switch (op) {
@@ -166,27 +285,15 @@ Callable CodeFactory::OrdinaryToPrimitive(Isolate* isolate,
 }
 
 // static
-Callable CodeFactory::StringAdd(Isolate* isolate, StringAddFlags flags,
-                                PretenureFlag pretenure_flag) {
-  if (pretenure_flag == NOT_TENURED) {
-    switch (flags) {
-      case STRING_ADD_CHECK_NONE:
-        return Builtins::CallableFor(isolate,
-                                     Builtins::kStringAdd_CheckNone_NotTenured);
-      case STRING_ADD_CONVERT_LEFT:
-        return Builtins::CallableFor(
-            isolate, Builtins::kStringAdd_ConvertLeft_NotTenured);
-      case STRING_ADD_CONVERT_RIGHT:
-        return Builtins::CallableFor(
-            isolate, Builtins::kStringAdd_ConvertRight_NotTenured);
-    }
-  } else {
-    CHECK_EQ(TENURED, pretenure_flag);
-    CHECK_EQ(STRING_ADD_CHECK_NONE, flags);
-    return Builtins::CallableFor(isolate,
-                                 Builtins::kStringAdd_CheckNone_Tenured);
+Callable CodeFactory::StringAdd(Isolate* isolate, StringAddFlags flags) {
+  switch (flags) {
+    case STRING_ADD_CHECK_NONE:
+      return Builtins::CallableFor(isolate, Builtins::kStringAdd_CheckNone);
+    case STRING_ADD_CONVERT_LEFT:
+      return Builtins::CallableFor(isolate, Builtins::kStringAdd_ConvertLeft);
+    case STRING_ADD_CONVERT_RIGHT:
+      return Builtins::CallableFor(isolate, Builtins::kStringAdd_ConvertRight);
   }
-
   UNREACHABLE();
 }
 
@@ -218,7 +325,7 @@ Callable CodeFactory::FastNewFunctionContext(Isolate* isolate,
 // static
 Callable CodeFactory::ArgumentAdaptor(Isolate* isolate) {
   return Callable(BUILTIN_CODE(isolate, ArgumentsAdaptorTrampoline),
-                  ArgumentAdaptorDescriptor{});
+                  ArgumentsAdaptorDescriptor{});
 }
 
 // static

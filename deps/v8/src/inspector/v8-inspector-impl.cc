@@ -247,10 +247,15 @@ void V8InspectorImpl::contextCollected(int groupId, int contextId) {
 void V8InspectorImpl::resetContextGroup(int contextGroupId) {
   m_consoleStorageMap.erase(contextGroupId);
   m_muteExceptionsMap.erase(contextGroupId);
+  std::vector<int> contextIdsToClear;
+  forEachContext(contextGroupId,
+                 [&contextIdsToClear](InspectedContext* context) {
+                   contextIdsToClear.push_back(context->contextId());
+                 });
+  m_debugger->wasmTranslation()->Clear(m_isolate, contextIdsToClear);
   forEachSession(contextGroupId,
                  [](V8InspectorSessionImpl* session) { session->reset(); });
   m_contexts.erase(contextGroupId);
-  m_debugger->wasmTranslation()->Clear();
 }
 
 void V8InspectorImpl::idleStarted() { m_isolate->SetIdle(true); }
@@ -359,7 +364,8 @@ V8Console* V8InspectorImpl::console() {
 }
 
 void V8InspectorImpl::forEachContext(
-    int contextGroupId, std::function<void(InspectedContext*)> callback) {
+    int contextGroupId,
+    const std::function<void(InspectedContext*)>& callback) {
   auto it = m_contexts.find(contextGroupId);
   if (it == m_contexts.end()) return;
   std::vector<int> ids;
@@ -376,7 +382,8 @@ void V8InspectorImpl::forEachContext(
 }
 
 void V8InspectorImpl::forEachSession(
-    int contextGroupId, std::function<void(V8InspectorSessionImpl*)> callback) {
+    int contextGroupId,
+    const std::function<void(V8InspectorSessionImpl*)>& callback) {
   auto it = m_sessions.find(contextGroupId);
   if (it == m_sessions.end()) return;
   std::vector<int> ids;
@@ -402,7 +409,7 @@ struct V8InspectorImpl::EvaluateScope::CancelToken {
 
 V8InspectorImpl::EvaluateScope::~EvaluateScope() {
   if (m_cancelToken) {
-    v8::base::LockGuard<v8::base::Mutex> lock(&m_cancelToken->m_mutex);
+    v8::base::MutexGuard lock(&m_cancelToken->m_mutex);
     m_cancelToken->m_canceled = true;
     m_isolate->CancelTerminateExecution();
   }
@@ -411,12 +418,12 @@ V8InspectorImpl::EvaluateScope::~EvaluateScope() {
 class V8InspectorImpl::EvaluateScope::TerminateTask : public v8::Task {
  public:
   TerminateTask(v8::Isolate* isolate, std::shared_ptr<CancelToken> token)
-      : m_isolate(isolate), m_token(token) {}
+      : m_isolate(isolate), m_token(std::move(token)) {}
 
-  void Run() {
+  void Run() override {
     // CancelToken contains m_canceled bool which may be changed from main
     // thread, so lock mutex first.
-    v8::base::LockGuard<v8::base::Mutex> lock(&m_token->m_mutex);
+    v8::base::MutexGuard lock(&m_token->m_mutex);
     if (m_token->m_canceled) return;
     m_isolate->TerminateExecution();
   }

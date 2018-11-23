@@ -20,6 +20,7 @@ class WasmCode;
 class AbstractCode;
 class Debug;
 class ExternalCallbackScope;
+class InnerPointerToCodeCache;
 class Isolate;
 class ObjectVisitor;
 class RootVisitor;
@@ -30,36 +31,6 @@ class WasmDebugInfo;
 class WasmInstanceObject;
 class WasmModuleObject;
 
-class InnerPointerToCodeCache {
- public:
-  struct InnerPointerToCodeCacheEntry {
-    Address inner_pointer;
-    Code* code;
-    SafepointEntry safepoint_entry;
-  };
-
-  explicit InnerPointerToCodeCache(Isolate* isolate) : isolate_(isolate) {
-    Flush();
-  }
-
-  void Flush() {
-    memset(&cache_[0], 0, sizeof(cache_));
-  }
-
-  InnerPointerToCodeCacheEntry* GetCacheEntry(Address inner_pointer);
-
- private:
-  InnerPointerToCodeCacheEntry* cache(int index) { return &cache_[index]; }
-
-  Isolate* isolate_;
-
-  static const int kInnerPointerToCodeCacheSize = 1024;
-  InnerPointerToCodeCacheEntry cache_[kInnerPointerToCodeCacheSize];
-
-  DISALLOW_COPY_AND_ASSIGN(InnerPointerToCodeCache);
-};
-
-
 class StackHandlerConstants : public AllStatic {
  public:
   static const int kNextOffset = 0 * kPointerSize;
@@ -69,8 +40,7 @@ class StackHandlerConstants : public AllStatic {
   static const int kSlotCount = kSize >> kPointerSizeLog2;
 };
 
-
-class StackHandler BASE_EMBEDDED {
+class StackHandler {
  public:
   // Get the address of this stack handler.
   inline Address address() const;
@@ -110,7 +80,7 @@ class StackHandler BASE_EMBEDDED {
   V(NATIVE, NativeFrame)
 
 // Abstract base class for all stack frames.
-class StackFrame BASE_EMBEDDED {
+class StackFrame {
  public:
 #define DECLARE_TYPE(type, ignore) type,
   enum Type {
@@ -262,7 +232,7 @@ class StackFrame BASE_EMBEDDED {
   }
 
   // Get the id of this stack frame.
-  Id id() const { return static_cast<Id>(OffsetFrom(caller_sp())); }
+  Id id() const { return static_cast<Id>(caller_sp()); }
 
   // Get the top handler from the current stack iterator.
   inline StackHandler* top_handler() const;
@@ -272,14 +242,14 @@ class StackFrame BASE_EMBEDDED {
 
   // Get the code associated with this frame.
   // This method could be called during marking phase of GC.
-  virtual Code* unchecked_code() const = 0;
+  virtual Code unchecked_code() const = 0;
 
   // Search for the code associated with this frame.
-  Code* LookupCode() const;
+  Code LookupCode() const;
 
   virtual void Iterate(RootVisitor* v) const = 0;
   static void IteratePc(RootVisitor* v, Address* pc_address,
-                        Address* constant_pool_address, Code* holder);
+                        Address* constant_pool_address, Code holder);
 
   // Sets a callback function for return-address rewriting profilers
   // to resolve the location of a return address to the location of the
@@ -301,7 +271,7 @@ class StackFrame BASE_EMBEDDED {
 
  protected:
   inline explicit StackFrame(StackFrameIteratorBase* iterator);
-  virtual ~StackFrame() { }
+  virtual ~StackFrame() = default;
 
   // Compute the stack pointer for the calling frame.
   virtual Address GetCallerStackPointer() const = 0;
@@ -338,7 +308,7 @@ class NativeFrame : public StackFrame {
  public:
   Type type() const override { return NATIVE; }
 
-  Code* unchecked_code() const override { return nullptr; }
+  Code unchecked_code() const override;
 
   // Garbage collection support.
   void Iterate(RootVisitor* v) const override {}
@@ -359,7 +329,7 @@ class EntryFrame: public StackFrame {
  public:
   Type type() const override { return ENTRY; }
 
-  Code* unchecked_code() const override;
+  Code unchecked_code() const override;
 
   // Garbage collection support.
   void Iterate(RootVisitor* v) const override;
@@ -388,7 +358,7 @@ class ConstructEntryFrame : public EntryFrame {
  public:
   Type type() const override { return CONSTRUCT_ENTRY; }
 
-  Code* unchecked_code() const override;
+  Code unchecked_code() const override;
 
   static ConstructEntryFrame* cast(StackFrame* frame) {
     DCHECK(frame->is_construct_entry());
@@ -408,7 +378,7 @@ class ExitFrame: public StackFrame {
  public:
   Type type() const override { return EXIT; }
 
-  Code* unchecked_code() const override;
+  Code unchecked_code() const override;
 
   Object*& code_slot() const;
 
@@ -476,7 +446,7 @@ class BuiltinExitFrame : public ExitFrame {
 
 class StandardFrame;
 
-class FrameSummary BASE_EMBEDDED {
+class FrameSummary {
  public:
 // Subclasses for the different summary kinds:
 #define FRAME_SUMMARY_VARIANTS(F)                                             \
@@ -744,7 +714,7 @@ class JavaScriptFrame : public StandardFrame {
              int index) const override;
 
   // Determine the code for the frame.
-  Code* unchecked_code() const override;
+  Code unchecked_code() const override;
 
   // Return a list with {SharedFunctionInfo} objects of this frame.
   virtual void GetFunctions(std::vector<SharedFunctionInfo*>* functions) const;
@@ -804,7 +774,7 @@ class StubFrame : public StandardFrame {
   void Iterate(RootVisitor* v) const override;
 
   // Determine the code for the frame.
-  Code* unchecked_code() const override;
+  Code unchecked_code() const override;
 
   // Lookup exception handler for current {pc}, returns -1 if none found. Only
   // TurboFan stub frames are supported. Also returns data associated with the
@@ -916,7 +886,7 @@ class ArgumentsAdaptorFrame: public JavaScriptFrame {
   Type type() const override { return ARGUMENTS_ADAPTOR; }
 
   // Determine the code for the frame.
-  Code* unchecked_code() const override;
+  Code unchecked_code() const override;
 
   static ArgumentsAdaptorFrame* cast(StackFrame* frame) {
     DCHECK(frame->is_arguments_adaptor());
@@ -973,7 +943,7 @@ class WasmCompiledFrame final : public StandardFrame {
   int LookupExceptionHandlerInTable(int* data);
 
   // Determine the code for the frame.
-  Code* unchecked_code() const override;
+  Code unchecked_code() const override;
 
   // Accessors.
   WasmInstanceObject* wasm_instance() const;
@@ -1014,7 +984,7 @@ class WasmInterpreterEntryFrame final : public StandardFrame {
   void Summarize(std::vector<FrameSummary>* frames) const override;
 
   // Determine the code for the frame.
-  Code* unchecked_code() const override;
+  Code unchecked_code() const override;
 
   // Accessors.
   WasmDebugInfo* debug_info() const;
@@ -1076,9 +1046,9 @@ class WasmCompileLazyFrame : public StandardFrame {
  public:
   Type type() const override { return WASM_COMPILE_LAZY; }
 
-  Code* unchecked_code() const override { return nullptr; }
+  Code unchecked_code() const override;
   WasmInstanceObject* wasm_instance() const;
-  Object** wasm_instance_slot() const;
+  ObjectSlot wasm_instance_slot() const;
 
   // Garbage collection support.
   void Iterate(RootVisitor* v) const override;
@@ -1105,7 +1075,7 @@ class InternalFrame: public StandardFrame {
   void Iterate(RootVisitor* v) const override;
 
   // Determine the code for the frame.
-  Code* unchecked_code() const override;
+  Code unchecked_code() const override;
 
   static InternalFrame* cast(StackFrame* frame) {
     DCHECK(frame->is_internal());
@@ -1202,7 +1172,7 @@ class JavaScriptBuiltinContinuationWithCatchFrame
   friend class StackFrameIteratorBase;
 };
 
-class StackFrameIteratorBase BASE_EMBEDDED {
+class StackFrameIteratorBase {
  public:
   Isolate* isolate() const { return isolate_; }
 
@@ -1257,7 +1227,7 @@ class StackFrameIterator: public StackFrameIteratorBase {
 };
 
 // Iterator that supports iterating through all JavaScript frames.
-class JavaScriptFrameIterator BASE_EMBEDDED {
+class JavaScriptFrameIterator {
  public:
   inline explicit JavaScriptFrameIterator(Isolate* isolate);
   inline JavaScriptFrameIterator(Isolate* isolate, ThreadLocalTop* top);
@@ -1275,7 +1245,7 @@ class JavaScriptFrameIterator BASE_EMBEDDED {
 // NOTE: The stack trace frame iterator is an iterator that only traverse proper
 // JavaScript frames that have proper JavaScript functions and WebAssembly
 // frames.
-class StackTraceFrameIterator BASE_EMBEDDED {
+class StackTraceFrameIterator {
  public:
   explicit StackTraceFrameIterator(Isolate* isolate);
   // Skip frames until the frame with the given id is reached.

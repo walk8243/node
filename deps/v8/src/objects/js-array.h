@@ -5,8 +5,9 @@
 #ifndef V8_OBJECTS_JS_ARRAY_H_
 #define V8_OBJECTS_JS_ARRAY_H_
 
-#include "src/objects.h"
+#include "src/objects/allocation-site.h"
 #include "src/objects/fixed-array.h"
+#include "src/objects/js-objects.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
@@ -26,7 +27,7 @@ class JSArray : public JSObject {
 
   // Overload the length setter to skip write barrier when the length
   // is set to a smi. This matches the set function on FixedArray.
-  inline void set_length(Smi* length);
+  inline void set_length(Smi length);
 
   static bool HasReadOnlyLength(Handle<JSArray> array);
   static bool WouldChangeReadOnlyLength(Handle<JSArray> array, uint32_t index);
@@ -62,6 +63,28 @@ class JSArray : public JSObject {
       Isolate* isolate, Handle<JSArray> a, PropertyDescriptor* desc,
       ShouldThrow should_throw);
 
+  // Support for Array.prototype.join().
+  // Writes a fixed array of strings and separators to a single destination
+  // string. This helpers assumes the fixed array encodes separators in two
+  // ways:
+  //   1) Explicitly with a smi, whos value represents the number of repeated
+  //      separators.
+  //   2) Implicitly between two consecutive strings a single separator.
+  //
+  // Here are some input/output examples given the separator string is ',':
+  //
+  //   [1, 'hello', 2, 'world', 1] => ',hello,,world,'
+  //   ['hello', 'world']          => 'hello,world'
+  //
+  // To avoid any allocations, this helper assumes the destination string is the
+  // exact length necessary to write the strings and separators from the fixed
+  // array.
+  static String* ArrayJoinConcatToSequentialString(Isolate* isolate,
+                                                   FixedArray* fixed_array,
+                                                   intptr_t length,
+                                                   String* separator,
+                                                   String* dest);
+
   // Checks whether the Array has the current realm's Array.prototype as its
   // prototype. This function is best-effort and only gives a conservative
   // approximation, erring on the side of false, in particular with respect
@@ -78,8 +101,13 @@ class JSArray : public JSObject {
   static const int kPreallocatedArrayElements = 4;
 
   // Layout description.
-  static const int kLengthOffset = JSObject::kHeaderSize;
-  static const int kSize = kLengthOffset + kPointerSize;
+#define JS_ARRAY_FIELDS(V)      \
+  V(kLengthOffset, kTaggedSize) \
+  /* Header size. */            \
+  V(kSize, 0)
+
+  DEFINE_FIELD_OFFSET_CONSTANTS(JSObject::kHeaderSize, JS_ARRAY_FIELDS)
+#undef JS_ARRAY_FIELDS
 
   static const int kLengthDescriptorIndex = 0;
 
@@ -88,6 +116,9 @@ class JSArray : public JSObject {
 
   // This constant is somewhat arbitrary. Any large enough value would work.
   static const uint32_t kMaxFastArrayLength = 32 * 1024 * 1024;
+
+  // Min. stack size for detecting an Array.prototype.join() call cycle.
+  static const uint32_t kMinJoinStackSize = 2;
 
   static const int kInitialMaxFastElementArray =
       (kMaxRegularHeapObjectSize - FixedArray::kHeaderSize - kSize -
@@ -145,10 +176,16 @@ class JSArrayIterator : public JSObject {
   inline IterationKind kind() const;
   inline void set_kind(IterationKind kind);
 
-  static const int kIteratedObjectOffset = JSObject::kHeaderSize;
-  static const int kNextIndexOffset = kIteratedObjectOffset + kPointerSize;
-  static const int kKindOffset = kNextIndexOffset + kPointerSize;
-  static const int kSize = kKindOffset + kPointerSize;
+  // Layout description.
+#define JS_ARRAY_ITERATOR_FIELDS(V)     \
+  V(kIteratedObjectOffset, kTaggedSize) \
+  V(kNextIndexOffset, kTaggedSize)      \
+  V(kKindOffset, kTaggedSize)           \
+  /* Header size. */                    \
+  V(kSize, 0)
+
+  DEFINE_FIELD_OFFSET_CONSTANTS(JSObject::kHeaderSize, JS_ARRAY_ITERATOR_FIELDS)
+#undef JS_ARRAY_ITERATOR_FIELDS
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(JSArrayIterator);

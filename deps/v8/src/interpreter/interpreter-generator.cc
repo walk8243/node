@@ -9,6 +9,7 @@
 
 #include "src/builtins/builtins-arguments-gen.h"
 #include "src/builtins/builtins-constructor-gen.h"
+#include "src/builtins/builtins-iterator-gen.h"
 #include "src/code-events.h"
 #include "src/code-factory.h"
 #include "src/debug/debug.h"
@@ -517,6 +518,18 @@ IGNITION_HANDLER(LdaNamedProperty, InterpreterAssembler) {
   }
 }
 
+// LdaPropertyNofeedback <object> <slot>
+//
+// Calls the GetProperty builtin for <object> and the key in the accumulator.
+IGNITION_HANDLER(LdaNamedPropertyNoFeedback, InterpreterAssembler) {
+  Node* object = LoadRegisterAtOperandIndex(0);
+  Node* name = LoadConstantPoolEntryAtOperandIndex(1);
+  Node* context = GetContext();
+  Node* result = CallBuiltin(Builtins::kGetProperty, context, object, name);
+  SetAccumulator(result);
+  Dispatch();
+}
+
 // KeyedLoadIC <object> <slot>
 //
 // Calls the KeyedLoadIC at FeedBackVector slot <slot> for <object> and the key
@@ -580,6 +593,24 @@ IGNITION_HANDLER(StaNamedProperty, InterpreterStoreNamedPropertyAssembler) {
 IGNITION_HANDLER(StaNamedOwnProperty, InterpreterStoreNamedPropertyAssembler) {
   Callable ic = CodeFactory::StoreOwnICInOptimizedCode(isolate());
   StaNamedProperty(ic);
+}
+
+// StaNamedPropertyNoFeedback <object> <name_index>
+//
+// Calls the SetPropertyBuiltin for <object> and the name in constant pool entry
+// <name_index> with the value in the accumulator.
+IGNITION_HANDLER(StaNamedPropertyNoFeedback,
+                 InterpreterStoreNamedPropertyAssembler) {
+  Node* object = LoadRegisterAtOperandIndex(0);
+  Node* name = LoadConstantPoolEntryAtOperandIndex(1);
+  Node* value = GetAccumulator();
+  Node* language_mode = SmiFromInt32(BytecodeOperandFlag(2));
+  Node* context = GetContext();
+
+  Node* result = CallRuntime(Runtime::kSetNamedProperty, context, object, name,
+                             value, language_mode);
+  SetAccumulator(result);
+  Dispatch();
 }
 
 // StaKeyedProperty <object> <key> <slot>
@@ -781,11 +812,11 @@ class InterpreterBinaryOpAssembler : public InterpreterAssembler {
     Node* rhs = GetAccumulator();
     Node* context = GetContext();
     Node* slot_index = BytecodeOperandIdx(1);
-    Node* feedback_vector = LoadFeedbackVector();
+    Node* maybe_feedback_vector = LoadFeedbackVectorUnchecked();
 
     BinaryOpAssembler binop_asm(state());
     Node* result = (binop_asm.*generator)(context, lhs, rhs, slot_index,
-                                          feedback_vector, false);
+                                          maybe_feedback_vector, false);
     SetAccumulator(result);
     Dispatch();
   }
@@ -795,11 +826,11 @@ class InterpreterBinaryOpAssembler : public InterpreterAssembler {
     Node* rhs = BytecodeOperandImmSmi(0);
     Node* context = GetContext();
     Node* slot_index = BytecodeOperandIdx(1);
-    Node* feedback_vector = LoadFeedbackVector();
+    Node* maybe_feedback_vector = LoadFeedbackVectorUnchecked();
 
     BinaryOpAssembler binop_asm(state());
     Node* result = (binop_asm.*generator)(context, lhs, rhs, slot_index,
-                                          feedback_vector, true);
+                                          maybe_feedback_vector, true);
     SetAccumulator(result);
     Dispatch();
   }
@@ -902,7 +933,7 @@ class InterpreterBitwiseBinaryOpAssembler : public InterpreterAssembler {
     Node* right = GetAccumulator();
     Node* context = GetContext();
     Node* slot_index = BytecodeOperandIdx(1);
-    Node* feedback_vector = LoadFeedbackVector();
+    Node* maybe_feedback_vector = LoadFeedbackVectorUnchecked();
 
     TVARIABLE(Smi, var_left_feedback);
     TVARIABLE(Smi, var_right_feedback);
@@ -928,7 +959,7 @@ class InterpreterBitwiseBinaryOpAssembler : public InterpreterAssembler {
         BinaryOperationFeedback::kNumber);
     TNode<Smi> input_feedback =
         SmiOr(var_left_feedback.value(), var_right_feedback.value());
-    UpdateFeedback(SmiOr(result_type, input_feedback), feedback_vector,
+    UpdateFeedback(SmiOr(result_type, input_feedback), maybe_feedback_vector,
                    slot_index);
     SetAccumulator(result);
     Dispatch();
@@ -943,7 +974,7 @@ class InterpreterBitwiseBinaryOpAssembler : public InterpreterAssembler {
         CallRuntime(Runtime::kBigIntBinaryOp, context, var_left_bigint.value(),
                     var_right_bigint.value(), SmiConstant(bitwise_op)));
     UpdateFeedback(SmiOr(var_left_feedback.value(), var_right_feedback.value()),
-                   feedback_vector, slot_index);
+                   maybe_feedback_vector, slot_index);
     Dispatch();
   }
 
@@ -951,7 +982,7 @@ class InterpreterBitwiseBinaryOpAssembler : public InterpreterAssembler {
     Node* left = GetAccumulator();
     Node* right = BytecodeOperandImmSmi(0);
     Node* slot_index = BytecodeOperandIdx(1);
-    Node* feedback_vector = LoadFeedbackVector();
+    Node* maybe_feedback_vector = LoadFeedbackVectorUnchecked();
     Node* context = GetContext();
 
     TVARIABLE(Smi, var_left_feedback);
@@ -969,12 +1000,13 @@ class InterpreterBitwiseBinaryOpAssembler : public InterpreterAssembler {
         TaggedIsSmi(result), BinaryOperationFeedback::kSignedSmall,
         BinaryOperationFeedback::kNumber);
     UpdateFeedback(SmiOr(result_type, var_left_feedback.value()),
-                   feedback_vector, slot_index);
+                   maybe_feedback_vector, slot_index);
     SetAccumulator(result);
     Dispatch();
 
     BIND(&if_bigint_mix);
-    UpdateFeedback(var_left_feedback.value(), feedback_vector, slot_index);
+    UpdateFeedback(var_left_feedback.value(), maybe_feedback_vector,
+                   slot_index);
     ThrowTypeError(context, MessageTemplate::kBigIntMixedTypes);
   }
 };
@@ -1057,7 +1089,7 @@ IGNITION_HANDLER(BitwiseAndSmi, InterpreterBitwiseBinaryOpAssembler) {
 IGNITION_HANDLER(BitwiseNot, InterpreterAssembler) {
   Node* operand = GetAccumulator();
   Node* slot_index = BytecodeOperandIdx(0);
-  Node* feedback_vector = LoadFeedbackVector();
+  Node* maybe_feedback_vector = LoadFeedbackVectorUnchecked();
   Node* context = GetContext();
 
   VARIABLE(var_word32, MachineRepresentation::kWord32);
@@ -1074,15 +1106,15 @@ IGNITION_HANDLER(BitwiseNot, InterpreterAssembler) {
   TNode<Smi> result_type = SelectSmiConstant(
       TaggedIsSmi(result), BinaryOperationFeedback::kSignedSmall,
       BinaryOperationFeedback::kNumber);
-  UpdateFeedback(SmiOr(result_type, var_feedback.value()), feedback_vector,
-                 slot_index);
+  UpdateFeedback(SmiOr(result_type, var_feedback.value()),
+                 maybe_feedback_vector, slot_index);
   SetAccumulator(result);
   Dispatch();
 
   // BigInt case.
   BIND(&if_bigint);
-  UpdateFeedback(SmiConstant(BinaryOperationFeedback::kBigInt), feedback_vector,
-                 slot_index);
+  UpdateFeedback(SmiConstant(BinaryOperationFeedback::kBigInt),
+                 maybe_feedback_vector, slot_index);
   SetAccumulator(CallRuntime(Runtime::kBigIntUnaryOp, context,
                              var_bigint.value(),
                              SmiConstant(Operation::kBitwiseNot)));
@@ -1122,7 +1154,7 @@ class UnaryNumericOpAssembler : public InterpreterAssembler {
                           OperandScale operand_scale)
       : InterpreterAssembler(state, bytecode, operand_scale) {}
 
-  virtual ~UnaryNumericOpAssembler() {}
+  virtual ~UnaryNumericOpAssembler() = default;
 
   // Must return a tagged value.
   virtual TNode<Number> SmiOp(TNode<Smi> smi_value, Variable* var_feedback,
@@ -1135,7 +1167,7 @@ class UnaryNumericOpAssembler : public InterpreterAssembler {
   void UnaryOpWithFeedback() {
     VARIABLE(var_value, MachineRepresentation::kTagged, GetAccumulator());
     Node* slot_index = BytecodeOperandIdx(0);
-    Node* feedback_vector = LoadFeedbackVector();
+    Node* maybe_feedback_vector = LoadFeedbackVectorUnchecked();
 
     VARIABLE(var_result, MachineRepresentation::kTagged);
     VARIABLE(var_float_value, MachineRepresentation::kFloat64);
@@ -1214,7 +1246,7 @@ class UnaryNumericOpAssembler : public InterpreterAssembler {
     }
 
     BIND(&end);
-    UpdateFeedback(var_feedback.value(), feedback_vector, slot_index);
+    UpdateFeedback(var_feedback.value(), maybe_feedback_vector, slot_index);
     SetAccumulator(var_result.value());
     Dispatch();
   }
@@ -1273,7 +1305,7 @@ IGNITION_HANDLER(Negate, NegateAssemblerImpl) { UnaryOpWithFeedback(); }
 IGNITION_HANDLER(ToName, InterpreterAssembler) {
   Node* object = GetAccumulator();
   Node* context = GetContext();
-  Node* result = ToName(context, object);
+  Node* result = CallBuiltin(Builtins::kToName, context, object);
   StoreRegisterAtOperandIndex(result, 0);
   Dispatch();
 }
@@ -1491,11 +1523,21 @@ class InterpreterJSCallAssembler : public InterpreterAssembler {
     Node* function = LoadRegisterAtOperandIndex(0);
     RegListNodePair args = GetRegisterListAtOperandIndex(1);
     Node* slot_id = BytecodeOperandIdx(3);
-    Node* feedback_vector = LoadFeedbackVector();
+    Node* maybe_feedback_vector = LoadFeedbackVectorUnchecked();
     Node* context = GetContext();
 
     // Collect the {function} feedback.
-    CollectCallFeedback(function, context, feedback_vector, slot_id);
+    CollectCallFeedback(function, context, maybe_feedback_vector, slot_id);
+
+    // Call the function and dispatch to the next handler.
+    CallJSAndDispatch(function, context, args, receiver_mode);
+  }
+
+  // Generates code to perform a JS call without collecting feedback.
+  void JSCallNoFeedback(ConvertReceiverMode receiver_mode) {
+    Node* function = LoadRegisterAtOperandIndex(0);
+    RegListNodePair args = GetRegisterListAtOperandIndex(1);
+    Node* context = GetContext();
 
     // Call the function and dispatch to the next handler.
     CallJSAndDispatch(function, context, args, receiver_mode);
@@ -1514,11 +1556,11 @@ class InterpreterJSCallAssembler : public InterpreterAssembler {
 
     Node* function = LoadRegisterAtOperandIndex(0);
     Node* slot_id = BytecodeOperandIdx(kSlotOperandIndex);
-    Node* feedback_vector = LoadFeedbackVector();
+    Node* maybe_feedback_vector = LoadFeedbackVectorUnchecked();
     Node* context = GetContext();
 
     // Collect the {function} feedback.
-    CollectCallFeedback(function, context, feedback_vector, slot_id);
+    CollectCallFeedback(function, context, maybe_feedback_vector, slot_id);
 
     switch (kRecieverAndArgOperandCount) {
       case 0:
@@ -1588,6 +1630,10 @@ IGNITION_HANDLER(CallUndefinedReceiver1, InterpreterJSCallAssembler) {
 
 IGNITION_HANDLER(CallUndefinedReceiver2, InterpreterJSCallAssembler) {
   JSCallN(2, ConvertReceiverMode::kNullOrUndefined);
+}
+
+IGNITION_HANDLER(CallNoFeedback, InterpreterJSCallAssembler) {
+  JSCallNoFeedback(ConvertReceiverMode::kAny);
 }
 
 // CallRuntime <function_id> <first_arg> <arg_count>
@@ -1665,12 +1711,12 @@ IGNITION_HANDLER(CallWithSpread, InterpreterAssembler) {
   Node* callable = LoadRegisterAtOperandIndex(0);
   RegListNodePair args = GetRegisterListAtOperandIndex(1);
   Node* slot_id = BytecodeOperandIdx(3);
-  Node* feedback_vector = LoadFeedbackVector();
+  Node* maybe_feedback_vector = LoadFeedbackVectorUnchecked();
   Node* context = GetContext();
 
   // Call into Runtime function CallWithSpread which does everything.
   CallJSWithSpreadAndDispatch(callable, context, args, slot_id,
-                              feedback_vector);
+                              maybe_feedback_vector);
 }
 
 // ConstructWithSpread <first_arg> <arg_count>
@@ -1743,8 +1789,9 @@ class InterpreterCompareOpAssembler : public InterpreterAssembler {
     }
 
     Node* slot_index = BytecodeOperandIdx(1);
-    Node* feedback_vector = LoadFeedbackVector();
-    UpdateFeedback(var_type_feedback.value(), feedback_vector, slot_index);
+    Node* maybe_feedback_vector = LoadFeedbackVectorUnchecked();
+    UpdateFeedback(var_type_feedback.value(), maybe_feedback_vector,
+                   slot_index);
     SetAccumulator(result);
     Dispatch();
   }
@@ -1827,12 +1874,17 @@ IGNITION_HANDLER(TestInstanceOf, InterpreterAssembler) {
   Node* object = LoadRegisterAtOperandIndex(0);
   Node* callable = GetAccumulator();
   Node* slot_id = BytecodeOperandIdx(1);
-  Node* feedback_vector = LoadFeedbackVector();
+  Node* feedback_vector = LoadFeedbackVectorUnchecked();
   Node* context = GetContext();
+
+  Label feedback_done(this);
+  GotoIf(IsUndefined(feedback_vector), &feedback_done);
 
   // Record feedback for the {callable} in the {feedback_vector}.
   CollectCallableFeedback(callable, context, feedback_vector, slot_id);
+  Goto(&feedback_done);
 
+  BIND(&feedback_done);
   // Perform the actual instanceof operation.
   SetAccumulator(InstanceOf(object, callable, context));
   Dispatch();
@@ -2381,6 +2433,18 @@ IGNITION_HANDLER(CreateEmptyArrayLiteral, InterpreterAssembler) {
   Dispatch();
 }
 
+// CreateArrayFromIterable
+//
+// Spread the given iterable from the accumulator into a new JSArray.
+IGNITION_HANDLER(CreateArrayFromIterable, InterpreterAssembler) {
+  Node* iterable = GetAccumulator();
+  Node* context = GetContext();
+  Node* result =
+      CallBuiltin(Builtins::kIterableToListWithSymbolLookup, context, iterable);
+  SetAccumulator(result);
+  Dispatch();
+}
+
 // CreateObjectLiteral <element_idx> <literal_idx> <flags>
 //
 // Creates an object literal for literal index <literal_idx> with
@@ -2402,7 +2466,7 @@ IGNITION_HANDLER(CreateObjectLiteral, InterpreterAssembler) {
     ConstructorBuiltinsAssembler constructor_assembler(state());
     Node* result = constructor_assembler.EmitCreateShallowObjectLiteral(
         feedback_vector, slot_id, &if_not_fast_clone);
-    StoreRegisterAtOperandIndex(result, 3);
+    SetAccumulator(result);
     Dispatch();
   }
 
@@ -2420,7 +2484,7 @@ IGNITION_HANDLER(CreateObjectLiteral, InterpreterAssembler) {
     Node* result =
         CallRuntime(Runtime::kCreateObjectLiteral, context, feedback_vector,
                     SmiTag(slot_id), object_boilerplate_description, flags);
-    StoreRegisterAtOperandIndex(result, 3);
+    SetAccumulator(result);
     // TODO(klaasb) build a single dispatch once the call is inlined
     Dispatch();
   }
@@ -2495,18 +2559,30 @@ IGNITION_HANDLER(CreateClosure, InterpreterAssembler) {
   Node* flags = BytecodeOperandFlag(2);
   Node* context = GetContext();
   Node* slot = BytecodeOperandIdx(1);
-  Node* feedback_vector = LoadFeedbackVector();
-  TNode<Object> feedback_cell =
-      CAST(LoadFeedbackVectorSlot(feedback_vector, slot));
 
+  Label if_undefined(this), load_feedback_done(this);
+  Variable feedback_cell(this, MachineRepresentation::kTagged);
+  Node* feedback_vector = LoadFeedbackVectorUnchecked();
+
+  GotoIf(IsUndefined(feedback_vector), &if_undefined);
+  feedback_cell.Bind(LoadFeedbackVectorSlot(feedback_vector, slot));
+  Goto(&load_feedback_done);
+
+  BIND(&if_undefined);
+  {
+    feedback_cell.Bind(LoadRoot(RootIndex::kNoFeedbackCell));
+    Goto(&load_feedback_done);
+  }
+
+  BIND(&load_feedback_done);
   Label if_fast(this), if_slow(this, Label::kDeferred);
   Branch(IsSetWord32<CreateClosureFlags::FastNewClosureBit>(flags), &if_fast,
          &if_slow);
 
   BIND(&if_fast);
   {
-    Node* result =
-        CallBuiltin(Builtins::kFastNewClosure, context, shared, feedback_cell);
+    Node* result = CallBuiltin(Builtins::kFastNewClosure, context, shared,
+                               feedback_cell.value());
     SetAccumulator(result);
     Dispatch();
   }
@@ -2519,8 +2595,8 @@ IGNITION_HANDLER(CreateClosure, InterpreterAssembler) {
 
     BIND(&if_newspace);
     {
-      Node* result =
-          CallRuntime(Runtime::kNewClosure, context, shared, feedback_cell);
+      Node* result = CallRuntime(Runtime::kNewClosure, context, shared,
+                                 feedback_cell.value());
       SetAccumulator(result);
       Dispatch();
     }
@@ -2528,7 +2604,7 @@ IGNITION_HANDLER(CreateClosure, InterpreterAssembler) {
     BIND(&if_oldspace);
     {
       Node* result = CallRuntime(Runtime::kNewClosure_Tenured, context, shared,
-                                 feedback_cell);
+                                 feedback_cell.value());
       SetAccumulator(result);
       Dispatch();
     }
@@ -2697,6 +2773,7 @@ IGNITION_HANDLER(Throw, InterpreterAssembler) {
   CallRuntime(Runtime::kThrow, context, exception);
   // We shouldn't ever return from a throw.
   Abort(AbortReason::kUnexpectedReturnFromThrow);
+  Unreachable();
 }
 
 // ReThrow
@@ -2708,6 +2785,7 @@ IGNITION_HANDLER(ReThrow, InterpreterAssembler) {
   CallRuntime(Runtime::kReThrow, context, exception);
   // We shouldn't ever return from a throw.
   Abort(AbortReason::kUnexpectedReturnFromThrow);
+  Unreachable();
 }
 
 // Abort <abort_reason>
@@ -2744,6 +2822,7 @@ IGNITION_HANDLER(ThrowReferenceErrorIfHole, InterpreterAssembler) {
     CallRuntime(Runtime::kThrowReferenceError, GetContext(), name);
     // We shouldn't ever return from a throw.
     Abort(AbortReason::kUnexpectedReturnFromThrow);
+    Unreachable();
   }
 }
 
@@ -2762,6 +2841,7 @@ IGNITION_HANDLER(ThrowSuperNotCalledIfHole, InterpreterAssembler) {
     CallRuntime(Runtime::kThrowSuperNotCalled, GetContext());
     // We shouldn't ever return from a throw.
     Abort(AbortReason::kUnexpectedReturnFromThrow);
+    Unreachable();
   }
 }
 
@@ -2781,6 +2861,7 @@ IGNITION_HANDLER(ThrowSuperAlreadyCalledIfNotHole, InterpreterAssembler) {
     CallRuntime(Runtime::kThrowSuperAlreadyCalledError, GetContext());
     // We shouldn't ever return from a throw.
     Abort(AbortReason::kUnexpectedReturnFromThrow);
+    Unreachable();
   }
 }
 
@@ -3014,6 +3095,7 @@ IGNITION_HANDLER(ExtraWide, InterpreterAssembler) {
 // An invalid bytecode aborting execution if dispatched.
 IGNITION_HANDLER(Illegal, InterpreterAssembler) {
   Abort(AbortReason::kInvalidBytecode);
+  Unreachable();
 }
 
 // SuspendGenerator <generator> <first input register> <register count>
@@ -3128,7 +3210,8 @@ IGNITION_HANDLER(ResumeGenerator, InterpreterAssembler) {
 
 Handle<Code> GenerateBytecodeHandler(Isolate* isolate, Bytecode bytecode,
                                      OperandScale operand_scale,
-                                     int builtin_index) {
+                                     int builtin_index,
+                                     const AssemblerOptions& options) {
   Zone zone(isolate->allocator(), ZONE_NAME);
   compiler::CodeAssemblerState state(
       isolate, &zone, InterpreterDispatchDescriptor{}, Code::BYTECODE_HANDLER,
@@ -3147,8 +3230,7 @@ Handle<Code> GenerateBytecodeHandler(Isolate* isolate, Bytecode bytecode,
 #undef CALL_GENERATOR
   }
 
-  Handle<Code> code = compiler::CodeAssembler::GenerateCode(
-      &state, AssemblerOptions::Default(isolate));
+  Handle<Code> code = compiler::CodeAssembler::GenerateCode(&state, options);
   PROFILE(isolate, CodeCreateEvent(
                        CodeEventListener::BYTECODE_HANDLER_TAG,
                        AbstractCode::cast(*code),
@@ -3160,73 +3242,6 @@ Handle<Code> GenerateBytecodeHandler(Isolate* isolate, Bytecode bytecode,
     os << std::flush;
   }
 #endif  // ENABLE_DISASSEMBLER
-  return code;
-}
-
-namespace {
-
-// DeserializeLazy
-//
-// Deserialize the bytecode handler, store it in the dispatch table, and
-// finally jump there (preserving existing args).
-// We manually create a custom assembler instead of using the helper macros
-// above since no corresponding bytecode exists.
-class DeserializeLazyAssembler : public InterpreterAssembler {
- public:
-  static const Bytecode kFakeBytecode = Bytecode::kIllegal;
-
-  explicit DeserializeLazyAssembler(compiler::CodeAssemblerState* state,
-                                    OperandScale operand_scale)
-      : InterpreterAssembler(state, kFakeBytecode, operand_scale) {}
-
-  static void Generate(compiler::CodeAssemblerState* state,
-                       OperandScale operand_scale) {
-    DeserializeLazyAssembler assembler(state, operand_scale);
-    state->SetInitialDebugInformation("DeserializeLazy", __FILE__, __LINE__);
-    assembler.GenerateImpl();
-  }
-
- private:
-  void GenerateImpl() { DeserializeLazyAndDispatch(); }
-
-  DISALLOW_COPY_AND_ASSIGN(DeserializeLazyAssembler);
-};
-
-}  // namespace
-
-Handle<Code> GenerateDeserializeLazyHandler(Isolate* isolate,
-                                            OperandScale operand_scale) {
-  Zone zone(isolate->allocator(), ZONE_NAME);
-
-  std::string debug_name = std::string("DeserializeLazy");
-  if (operand_scale > OperandScale::kSingle) {
-    Bytecode prefix_bytecode =
-        Bytecodes::OperandScaleToPrefixBytecode(operand_scale);
-    debug_name = debug_name.append(Bytecodes::ToString(prefix_bytecode));
-  }
-
-  compiler::CodeAssemblerState state(
-      isolate, &zone, InterpreterDispatchDescriptor{}, Code::BYTECODE_HANDLER,
-      debug_name.c_str(),
-      FLAG_untrusted_code_mitigations
-          ? PoisoningMitigationLevel::kPoisonCriticalOnly
-          : PoisoningMitigationLevel::kDontPoison);
-
-  DeserializeLazyAssembler::Generate(&state, operand_scale);
-  Handle<Code> code = compiler::CodeAssembler::GenerateCode(
-      &state, AssemblerOptions::Default(isolate));
-  PROFILE(isolate,
-          CodeCreateEvent(CodeEventListener::BYTECODE_HANDLER_TAG,
-                          AbstractCode::cast(*code), debug_name.c_str()));
-
-#ifdef ENABLE_DISASSEMBLER
-  if (FLAG_trace_ignition_codegen) {
-    StdoutStream os;
-    code->Disassemble(debug_name.c_str(), os);
-    os << std::flush;
-  }
-#endif  // ENABLE_DISASSEMBLER
-
   return code;
 }
 

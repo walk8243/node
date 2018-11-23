@@ -295,7 +295,7 @@ void StringStream::PrintName(Object* name) {
 
 
 void StringStream::PrintUsingMap(JSObject* js_object) {
-  Map* map = js_object->map();
+  Map map = js_object->map();
   int real_size = map->NumberOfOwnDescriptors();
   DescriptorArray* descs = map->instance_descriptors();
   for (int i = 0; i < real_size; i++) {
@@ -403,8 +403,7 @@ void StringStream::PrintMentionedObjectCache(Isolate* isolate) {
 }
 
 void StringStream::PrintSecurityTokenIfChanged(JSFunction* fun) {
-  Context* context = fun->context();
-  Object* token = context->native_context()->security_token();
+  Object* token = fun->native_context()->security_token();
   Isolate* isolate = fun->GetIsolate();
   if (token != isolate->string_stream_current_security_token()) {
     Add("Security context: %o\n", token);
@@ -413,7 +412,7 @@ void StringStream::PrintSecurityTokenIfChanged(JSFunction* fun) {
 }
 
 void StringStream::PrintFunction(JSFunction* fun, Object* receiver,
-                                 Code** code) {
+                                 Code* code) {
   PrintPrototype(fun, receiver);
   *code = fun->code();
 }
@@ -426,7 +425,7 @@ void StringStream::PrintPrototype(JSFunction* fun, Object* receiver) {
   if (receiver->IsNullOrUndefined(isolate) || receiver->IsTheHole(isolate) ||
       receiver->IsJSProxy()) {
     print_name = true;
-  } else if (isolate->context() != nullptr) {
+  } else if (!isolate->context().is_null()) {
     if (!receiver->IsJSObject()) {
       receiver = receiver->GetPrototypeChainRootMap(isolate)->prototype();
     }

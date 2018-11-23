@@ -18,16 +18,15 @@ BuiltinsConstantsTableBuilder::BuiltinsConstantsTableBuilder(Isolate* isolate)
   // And that the initial value of the builtins constants table can be treated
   // as a constant, which means that codegen will load it using the root
   // register.
-  DCHECK(isolate_->heap()->RootCanBeTreatedAsConstant(
-      Heap::kEmptyFixedArrayRootIndex));
+  DCHECK(RootsTable::IsImmortalImmovable(RootIndex::kEmptyFixedArray));
 }
 
 uint32_t BuiltinsConstantsTableBuilder::AddObject(Handle<Object> object) {
 #ifdef DEBUG
   // Roots must not be inserted into the constants table as they are already
   // accessibly from the root list.
-  Heap::RootListIndex root_list_index;
-  DCHECK(!isolate_->heap()->IsRootHandle(object, &root_list_index));
+  RootIndex root_list_index;
+  DCHECK(!isolate_->roots_table().IsRootHandle(object, &root_list_index));
 
   // Not yet finalized.
   DCHECK_EQ(ReadOnlyRoots(isolate_).empty_fixed_array(),
@@ -36,8 +35,8 @@ uint32_t BuiltinsConstantsTableBuilder::AddObject(Handle<Object> object) {
   // Must be on the main thread.
   DCHECK(ThreadId::Current().Equals(isolate_->thread_id()));
 
-  // Must be serializing.
-  DCHECK(isolate_->serializer_enabled());
+  // Must be generating embedded builtin code.
+  DCHECK(isolate_->ShouldLoadConstantsFromRootList());
 #endif
 
   uint32_t* maybe_key = map_.Find(object);
@@ -56,14 +55,14 @@ void BuiltinsConstantsTableBuilder::PatchSelfReference(
 #ifdef DEBUG
   // Roots must not be inserted into the constants table as they are already
   // accessibly from the root list.
-  Heap::RootListIndex root_list_index;
-  DCHECK(!isolate_->heap()->IsRootHandle(code_object, &root_list_index));
+  RootIndex root_list_index;
+  DCHECK(!isolate_->roots_table().IsRootHandle(code_object, &root_list_index));
 
   // Not yet finalized.
   DCHECK_EQ(ReadOnlyRoots(isolate_).empty_fixed_array(),
             isolate_->heap()->builtins_constants_table());
 
-  DCHECK(isolate_->serializer_enabled());
+  DCHECK(isolate_->ShouldLoadConstantsFromRootList());
 
   DCHECK(self_reference->IsOddball());
   DCHECK(Oddball::cast(*self_reference)->kind() ==
@@ -87,7 +86,7 @@ void BuiltinsConstantsTableBuilder::Finalize() {
 
   DCHECK_EQ(ReadOnlyRoots(isolate_).empty_fixed_array(),
             isolate_->heap()->builtins_constants_table());
-  DCHECK(isolate_->serializer_enabled());
+  DCHECK(isolate_->ShouldLoadConstantsFromRootList());
 
   // An empty map means there's nothing to do.
   if (map_.size() == 0) return;

@@ -94,6 +94,12 @@ class MachineType {
            representation() == MachineRepresentation::kTaggedSigned ||
            representation() == MachineRepresentation::kTagged;
   }
+  constexpr bool IsTaggedSigned() const {
+    return representation() == MachineRepresentation::kTaggedSigned;
+  }
+  constexpr bool IsTaggedPointer() const {
+    return representation() == MachineRepresentation::kTaggedPointer;
+  }
   constexpr static MachineRepresentation PointerRepresentation() {
     return (kPointerSize == 4) ? MachineRepresentation::kWord32
                                : MachineRepresentation::kWord64;
@@ -296,6 +302,12 @@ V8_EXPORT_PRIVATE inline int ElementSizeLog2Of(MachineRepresentation rep) {
 
 V8_EXPORT_PRIVATE inline int ElementSizeInBytes(MachineRepresentation rep) {
   return 1 << ElementSizeLog2Of(rep);
+}
+
+// Converts representation to bit for representation masks.
+V8_EXPORT_PRIVATE inline constexpr int RepresentationBit(
+    MachineRepresentation rep) {
+  return 1 << static_cast<int>(rep);
 }
 
 }  // namespace internal

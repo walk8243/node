@@ -40,6 +40,17 @@ class V8_EXPORT_PRIVATE CodeFactory final {
   static Callable StoreOwnIC(Isolate* isolate);
   static Callable StoreOwnICInOptimizedCode(Isolate* isolate);
 
+  static Callable KeyedStoreIC_SloppyArguments(Isolate* isolate,
+                                               KeyedAccessStoreMode mode);
+  static Callable KeyedStoreIC_Slow(Isolate* isolate,
+                                    KeyedAccessStoreMode mode);
+  static Callable StoreInArrayLiteralIC_Slow(Isolate* isolate,
+                                             KeyedAccessStoreMode mode);
+  static Callable ElementsTransitionAndStore(Isolate* isolate,
+                                             KeyedAccessStoreMode mode);
+  static Callable StoreFastElementIC(Isolate* isolate,
+                                     KeyedAccessStoreMode mode);
+
   static Callable ResumeGenerator(Isolate* isolate);
 
   static Callable FrameDropperTrampoline(Isolate* isolate);
@@ -59,8 +70,7 @@ class V8_EXPORT_PRIVATE CodeFactory final {
                                       OrdinaryToPrimitiveHint hint);
 
   static Callable StringAdd(Isolate* isolate,
-                            StringAddFlags flags = STRING_ADD_CHECK_NONE,
-                            PretenureFlag pretenure_flag = NOT_TENURED);
+                            StringAddFlags flags = STRING_ADD_CHECK_NONE);
 
   static Callable FastNewFunctionContext(Isolate* isolate,
                                          ScopeType scope_type);

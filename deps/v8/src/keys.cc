@@ -20,9 +20,6 @@
 namespace v8 {
 namespace internal {
 
-KeyAccumulator::~KeyAccumulator() {
-}
-
 namespace {
 
 static bool ContainsOnlyValidKeys(Handle<FixedArray> array) {
@@ -90,7 +87,7 @@ void KeyAccumulator::AddKey(Handle<Object> key, AddKeyConversion convert) {
     // The keys_ Set is converted directly to a FixedArray in GetKeys which can
     // be left-trimmer. Hence the previous Set should not keep a pointer to the
     // new one.
-    keys_->set(OrderedHashTableBase::kNextTableIndex, Smi::kZero);
+    keys_->set(OrderedHashSet::kNextTableIndex, Smi::kZero);
     keys_ = new_set;
   }
 }
@@ -227,7 +224,7 @@ void KeyAccumulator::AddShadowingKey(Handle<Object> key) {
 namespace {
 
 void TrySettingEmptyEnumCache(JSReceiver* object) {
-  Map* map = object->map();
+  Map map = object->map();
   DCHECK_EQ(kInvalidEnumCacheSentinel, map->EnumLength());
   if (!map->OnlyHasSimpleProperties()) return;
   if (map->IsJSProxyMap()) return;
@@ -404,7 +401,7 @@ MaybeHandle<FixedArray> FastKeyAccumulator::GetKeys(
 MaybeHandle<FixedArray> FastKeyAccumulator::GetKeysFast(
     GetKeysConversion keys_conversion) {
   bool own_only = has_empty_prototype_ || mode_ == KeyCollectionMode::kOwnOnly;
-  Map* map = receiver_->map();
+  Map map = receiver_->map();
   if (!own_only || map->IsCustomElementsReceiverMap()) {
     return MaybeHandle<FixedArray>();
   }
@@ -442,7 +439,7 @@ MaybeHandle<FixedArray>
 FastKeyAccumulator::GetOwnKeysWithUninitializedEnumCache() {
   Handle<JSObject> object = Handle<JSObject>::cast(receiver_);
   // Uninitalized enum cache
-  Map* map = object->map();
+  Map map = object->map();
   if (object->elements()->length() != 0) {
     // Assume that there are elements.
     return MaybeHandle<FixedArray>();
@@ -632,12 +629,12 @@ Handle<FixedArray> GetOwnEnumPropertyDictionaryKeys(Isolate* isolate,
                                                     KeyCollectionMode mode,
                                                     KeyAccumulator* accumulator,
                                                     Handle<JSObject> object,
-                                                    T* raw_dictionary) {
+                                                    T raw_dictionary) {
   Handle<T> dictionary(raw_dictionary, isolate);
-  int length = dictionary->NumberOfEnumerableProperties();
-  if (length == 0) {
+  if (dictionary->NumberOfElements() == 0) {
     return isolate->factory()->empty_fixed_array();
   }
+  int length = dictionary->NumberOfEnumerableProperties();
   Handle<FixedArray> storage = isolate->factory()->NewFixedArray(length);
   T::CopyEnumKeysTo(isolate, dictionary, storage, mode, accumulator);
   return storage;
@@ -652,7 +649,7 @@ Maybe<bool> KeyAccumulator::CollectOwnPropertyNames(Handle<JSReceiver> receiver,
       enum_keys = KeyAccumulator::GetOwnEnumPropertyKeys(isolate_, object);
       // If the number of properties equals the length of enumerable properties
       // we do not have to filter out non-enumerable ones
-      Map* map = object->map();
+      Map map = object->map();
       int nof_descriptors = map->NumberOfOwnDescriptors();
       if (enum_keys->length() != nof_descriptors) {
         Handle<DescriptorArray> descs =

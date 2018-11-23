@@ -21,9 +21,6 @@ class BytecodeArray;
 // debugged.
 class DebugInfo : public Struct, public NeverReadOnlySpaceObject {
  public:
-  using NeverReadOnlySpaceObject::GetHeap;
-  using NeverReadOnlySpaceObject::GetIsolate;
-
   enum Flag {
     kNone = 0,
     kHasBreakInfo = 1 << 0,
@@ -87,6 +84,10 @@ class DebugInfo : public Struct, public NeverReadOnlySpaceObject {
   // The original uninstrumented bytecode array for functions with break
   // points - the instrumented bytecode is held in the shared function info.
   DECL_ACCESSORS(original_bytecode_array, Object)
+
+  // The debug instrumented bytecode array for functions with break points
+  // - also pointed to by the shared function info.
+  DECL_ACCESSORS(debug_bytecode_array, Object)
 
   // Fixed array holding status information for each active break point.
   DECL_ACCESSORS(break_points, FixedArray)
@@ -165,16 +166,21 @@ class DebugInfo : public Struct, public NeverReadOnlySpaceObject {
   DECL_PRINTER(DebugInfo)
   DECL_VERIFIER(DebugInfo)
 
-  static const int kSharedFunctionInfoOffset = Struct::kHeaderSize;
-  static const int kDebuggerHintsOffset =
-      kSharedFunctionInfoOffset + kPointerSize;
-  static const int kScriptOffset = kDebuggerHintsOffset + kPointerSize;
-  static const int kOriginalBytecodeArrayOffset = kScriptOffset + kPointerSize;
-  static const int kBreakPointsStateOffset =
-      kOriginalBytecodeArrayOffset + kPointerSize;
-  static const int kFlagsOffset = kBreakPointsStateOffset + kPointerSize;
-  static const int kCoverageInfoOffset = kFlagsOffset + kPointerSize;
-  static const int kSize = kCoverageInfoOffset + kPointerSize;
+// Layout description.
+#define DEBUG_INFO_FIELDS(V)                   \
+  V(kSharedFunctionInfoOffset, kTaggedSize)    \
+  V(kDebuggerHintsOffset, kTaggedSize)         \
+  V(kScriptOffset, kTaggedSize)                \
+  V(kOriginalBytecodeArrayOffset, kTaggedSize) \
+  V(kDebugBytecodeArrayOffset, kTaggedSize)    \
+  V(kBreakPointsStateOffset, kTaggedSize)      \
+  V(kFlagsOffset, kTaggedSize)                 \
+  V(kCoverageInfoOffset, kTaggedSize)          \
+  /* Total size. */                            \
+  V(kSize, 0)
+
+  DEFINE_FIELD_OFFSET_CONSTANTS(Struct::kHeaderSize, DEBUG_INFO_FIELDS)
+#undef DEBUG_INFO_FIELDS
 
   static const int kEstimatedNofBreakPointsInFunction = 4;
 

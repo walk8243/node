@@ -19,24 +19,25 @@ CAST_ACCESSOR(Name)
 CAST_ACCESSOR(Symbol)
 
 ACCESSORS(Symbol, name, Object, kNameOffset)
-SMI_ACCESSORS(Symbol, flags, kFlagsOffset)
-BOOL_ACCESSORS(Symbol, flags, is_private, kPrivateBit)
-BOOL_ACCESSORS(Symbol, flags, is_well_known_symbol, kWellKnownSymbolBit)
-BOOL_ACCESSORS(Symbol, flags, is_public, kPublicBit)
-BOOL_ACCESSORS(Symbol, flags, is_interesting_symbol, kInterestingSymbolBit)
+INT_ACCESSORS(Symbol, flags, kFlagsOffset)
+BIT_FIELD_ACCESSORS(Symbol, flags, is_private, Symbol::IsPrivateBit)
+BIT_FIELD_ACCESSORS(Symbol, flags, is_well_known_symbol,
+                    Symbol::IsWellKnownSymbolBit)
+BIT_FIELD_ACCESSORS(Symbol, flags, is_public, Symbol::IsPublicBit)
+BIT_FIELD_ACCESSORS(Symbol, flags, is_interesting_symbol,
+                    Symbol::IsInterestingSymbolBit)
 
-bool Symbol::is_private_field() const {
-  bool value = BooleanBit::get(flags(), kPrivateFieldBit);
+bool Symbol::is_private_name() const {
+  bool value = Symbol::IsPrivateNameBit::decode(flags());
   DCHECK_IMPLIES(value, is_private());
   return value;
 }
 
-void Symbol::set_is_private_field() {
-  int old_value = flags();
+void Symbol::set_is_private_name() {
   // TODO(gsathya): Re-order the bits to have these next to each other
   // and just do the bit shifts once.
-  set_flags(BooleanBit::set(old_value, kPrivateBit, true) |
-            BooleanBit::set(old_value, kPrivateFieldBit, true));
+  set_flags(Symbol::IsPrivateBit::update(flags(), true));
+  set_flags(Symbol::IsPrivateNameBit::update(flags(), true));
 }
 
 bool Name::IsUniqueName() const {
@@ -51,13 +52,6 @@ uint32_t Name::hash_field() {
 
 void Name::set_hash_field(uint32_t value) {
   WRITE_UINT32_FIELD(this, kHashFieldOffset, value);
-#if V8_HOST_ARCH_64_BIT
-#if V8_TARGET_LITTLE_ENDIAN
-  WRITE_UINT32_FIELD(this, kHashFieldSlot + kInt32Size, 0);
-#else
-  WRITE_UINT32_FIELD(this, kHashFieldSlot, 0);
-#endif
-#endif
 }
 
 bool Name::Equals(Name* other) {
@@ -104,11 +98,11 @@ bool Name::IsPrivate() {
   return this->IsSymbol() && Symbol::cast(this)->is_private();
 }
 
-bool Name::IsPrivateField() {
-  bool is_private_field =
-      this->IsSymbol() && Symbol::cast(this)->is_private_field();
-  DCHECK_IMPLIES(is_private_field, IsPrivate());
-  return is_private_field;
+bool Name::IsPrivateName() {
+  bool is_private_name =
+      this->IsSymbol() && Symbol::cast(this)->is_private_name();
+  DCHECK_IMPLIES(is_private_name, IsPrivate());
+  return is_private_name;
 }
 
 bool Name::AsArrayIndex(uint32_t* index) {

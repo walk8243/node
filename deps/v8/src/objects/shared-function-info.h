@@ -7,7 +7,9 @@
 
 #include "src/bailout-reason.h"
 #include "src/objects.h"
+#include "src/objects/builtin-function-id.h"
 #include "src/objects/script.h"
+#include "src/objects/smi.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
@@ -15,6 +17,7 @@
 namespace v8 {
 namespace internal {
 
+class AsmWasmData;
 class BytecodeArray;
 class CoverageInfo;
 class DebugInfo;
@@ -31,7 +34,7 @@ class PreParsedScopeData : public HeapObject {
   inline void set_child_data(int index, Object* value,
                              WriteBarrierMode mode = UPDATE_WRITE_BARRIER);
 
-  inline Object** child_data_start() const;
+  inline ObjectSlot child_data_start() const;
 
   // Clear uninitialized padding space.
   inline void clear_padding();
@@ -40,24 +43,22 @@ class PreParsedScopeData : public HeapObject {
   DECL_PRINTER(PreParsedScopeData)
   DECL_VERIFIER(PreParsedScopeData)
 
-#define PRE_PARSED_SCOPE_DATA_FIELDS(V) \
-  V(kScopeDataOffset, kPointerSize)     \
-  V(kLengthOffset, kIntSize)            \
-  V(kUnalignedChildDataStartOffset, 0)
+// Layout description.
+#define PRE_PARSED_SCOPE_DATA_FIELDS(V)                                   \
+  V(kScopeDataOffset, kTaggedSize)                                        \
+  V(kLengthOffset, kIntSize)                                              \
+  V(kOptionalPaddingOffset, POINTER_SIZE_PADDING(kOptionalPaddingOffset)) \
+  /* Header size. */                                                      \
+  V(kChildDataStartOffset, 0)
 
   DEFINE_FIELD_OFFSET_CONSTANTS(HeapObject::kHeaderSize,
                                 PRE_PARSED_SCOPE_DATA_FIELDS)
 #undef PRE_PARSED_SCOPE_DATA_FIELDS
 
-  static const int kChildDataStartOffset =
-      POINTER_SIZE_ALIGN(kUnalignedChildDataStartOffset);
-
   class BodyDescriptor;
-  // No weak fields.
-  typedef BodyDescriptor BodyDescriptorWeak;
 
   static constexpr int SizeFor(int length) {
-    return kChildDataStartOffset + length * kPointerSize;
+    return kChildDataStartOffset + length * kTaggedSize;
   }
 
  private:
@@ -75,23 +76,24 @@ class UncompiledData : public HeapObject {
 
   DECL_CAST(UncompiledData)
 
-#define UNCOMPILED_DATA_FIELDS(V)         \
-  V(kStartOfPointerFieldsOffset, 0)       \
-  V(kInferredNameOffset, kPointerSize)    \
-  V(kEndOfPointerFieldsOffset, 0)         \
-  V(kStartPositionOffset, kInt32Size)     \
-  V(kEndPositionOffset, kInt32Size)       \
-  V(kFunctionLiteralIdOffset, kInt32Size) \
-  /* Total size. */                       \
-  V(kUnalignedSize, 0)
+// Layout description.
+#define UNCOMPILED_DATA_FIELDS(V)                                         \
+  V(kStartOfPointerFieldsOffset, 0)                                       \
+  V(kInferredNameOffset, kTaggedSize)                                     \
+  V(kEndOfTaggedFieldsOffset, 0)                                          \
+  /* Raw data fields. */                                                  \
+  V(kStartPositionOffset, kInt32Size)                                     \
+  V(kEndPositionOffset, kInt32Size)                                       \
+  V(kFunctionLiteralIdOffset, kInt32Size)                                 \
+  V(kOptionalPaddingOffset, POINTER_SIZE_PADDING(kOptionalPaddingOffset)) \
+  /* Header size. */                                                      \
+  V(kSize, 0)
 
   DEFINE_FIELD_OFFSET_CONSTANTS(HeapObject::kHeaderSize, UNCOMPILED_DATA_FIELDS)
 #undef UNCOMPILED_DATA_FIELDS
 
-  static const int kSize = POINTER_SIZE_ALIGN(kUnalignedSize);
-
   typedef FixedBodyDescriptor<kStartOfPointerFieldsOffset,
-                              kEndOfPointerFieldsOffset, kSize>
+                              kEndOfTaggedFieldsOffset, kSize>
       BodyDescriptor;
 
   // Clear uninitialized padding space.
@@ -114,8 +116,6 @@ class UncompiledDataWithoutPreParsedScope : public UncompiledData {
 
   // No extra fields compared to UncompiledData.
   typedef UncompiledData::BodyDescriptor BodyDescriptor;
-  // No weak fields.
-  typedef BodyDescriptor BodyDescriptorWeak;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(UncompiledDataWithoutPreParsedScope);
@@ -131,10 +131,11 @@ class UncompiledDataWithPreParsedScope : public UncompiledData {
   DECL_PRINTER(UncompiledDataWithPreParsedScope)
   DECL_VERIFIER(UncompiledDataWithPreParsedScope)
 
+// Layout description.
 #define UNCOMPILED_DATA_WITH_PRE_PARSED_SCOPE_FIELDS(V) \
   V(kStartOfPointerFieldsOffset, 0)                     \
-  V(kPreParsedScopeDataOffset, kPointerSize)            \
-  V(kEndOfPointerFieldsOffset, 0)                       \
+  V(kPreParsedScopeDataOffset, kTaggedSize)             \
+  V(kEndOfTaggedFieldsOffset, 0)                        \
   /* Total size. */                                     \
   V(kSize, 0)
 
@@ -147,11 +148,9 @@ class UncompiledDataWithPreParsedScope : public UncompiledData {
 
   typedef SubclassBodyDescriptor<
       UncompiledData::BodyDescriptor,
-      FixedBodyDescriptor<kStartOfPointerFieldsOffset,
-                          kEndOfPointerFieldsOffset, kSize>>
+      FixedBodyDescriptor<kStartOfPointerFieldsOffset, kEndOfTaggedFieldsOffset,
+                          kSize>>
       BodyDescriptor;
-  // No weak fields.
-  typedef BodyDescriptor BodyDescriptorWeak;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(UncompiledDataWithPreParsedScope);
@@ -160,12 +159,17 @@ class UncompiledDataWithPreParsedScope : public UncompiledData {
 class InterpreterData : public Struct {
  public:
   DECL_ACCESSORS(bytecode_array, BytecodeArray)
-  DECL_ACCESSORS(interpreter_trampoline, Code)
+  DECL_ACCESSORS2(interpreter_trampoline, Code)
 
-  static const int kBytecodeArrayOffset = Struct::kHeaderSize;
-  static const int kInterpreterTrampolineOffset =
-      kBytecodeArrayOffset + kPointerSize;
-  static const int kSize = kInterpreterTrampolineOffset + kPointerSize;
+// Layout description.
+#define INTERPRETER_DATA_FIELDS(V)             \
+  V(kBytecodeArrayOffset, kTaggedSize)         \
+  V(kInterpreterTrampolineOffset, kTaggedSize) \
+  /* Total size. */                            \
+  V(kSize, 0)
+
+  DEFINE_FIELD_OFFSET_CONSTANTS(Struct::kHeaderSize, INTERPRETER_DATA_FIELDS)
+#undef INTERPRETER_DATA_FIELDS
 
   DECL_CAST(InterpreterData)
   DECL_PRINTER(InterpreterData)
@@ -179,17 +183,14 @@ class InterpreterData : public Struct {
 // shared by multiple instances of the function.
 class SharedFunctionInfo : public HeapObject, public NeverReadOnlySpaceObject {
  public:
-  using NeverReadOnlySpaceObject::GetHeap;
-  using NeverReadOnlySpaceObject::GetIsolate;
-
-  static constexpr Object* const kNoSharedNameSentinel = Smi::kZero;
+  static constexpr ObjectPtr const kNoSharedNameSentinel = Smi::kZero;
 
   // [name]: Returns shared name if it exists or an empty string otherwise.
   inline String* Name() const;
   inline void SetName(String* name);
 
   // Get the code object which represents the execution of this function.
-  Code* GetCode() const;
+  Code GetCode() const;
 
   // Get the abstract code associated with the function, which will either be
   // a Code object or a BytecodeArray.
@@ -218,26 +219,18 @@ class SharedFunctionInfo : public HeapObject, public NeverReadOnlySpaceObject {
   static const int kNotFound = -1;
   static const uint16_t kInvalidLength = static_cast<uint16_t>(-1);
 
-  // Helpers for assembly code that does a backwards walk of the optimized code
-  // map.
-  static const int kOffsetToPreviousContext =
-      FixedArray::kHeaderSize + kPointerSize * (kContextOffset - kEntryLength);
-  static const int kOffsetToPreviousCachedCode =
-      FixedArray::kHeaderSize +
-      kPointerSize * (kCachedCodeOffset - kEntryLength);
-
   // [scope_info]: Scope info.
   DECL_ACCESSORS(scope_info, ScopeInfo)
 
   // End position of this function in the script source.
-  inline int EndPosition() const;
+  V8_EXPORT_PRIVATE int EndPosition() const;
 
   // Start position of this function in the script source.
-  inline int StartPosition() const;
+  V8_EXPORT_PRIVATE int StartPosition() const;
 
   // Set the start and end position of this function in the script source.
   // Updates the scope info if available.
-  inline void SetPosition(int start_position, int end_position);
+  V8_EXPORT_PRIVATE void SetPosition(int start_position, int end_position);
 
   // [outer scope info | feedback metadata] Shared storage for outer scope info
   // (on uncompiled functions) and feedback metadata (on compiled functions).
@@ -288,7 +281,7 @@ class SharedFunctionInfo : public HeapObject, public NeverReadOnlySpaceObject {
   //  - a BytecodeArray for the interpreter [HasBytecodeArray()].
   //  - a InterpreterData with the BytecodeArray and a copy of the
   //    interpreter trampoline [HasInterpreterData()]
-  //  - a FixedArray with Asm->Wasm conversion [HasAsmWasmData()].
+  //  - an AsmWasmData with Asm->Wasm conversion [HasAsmWasmData()].
   //  - a Smi containing the builtin id [HasBuiltinId()]
   //  - a UncompiledDataWithoutPreParsedScope for lazy compilation
   //    [HasUncompiledDataWithoutPreParsedScope()]
@@ -303,15 +296,15 @@ class SharedFunctionInfo : public HeapObject, public NeverReadOnlySpaceObject {
   inline bool HasBytecodeArray() const;
   inline BytecodeArray* GetBytecodeArray() const;
   inline void set_bytecode_array(BytecodeArray* bytecode);
-  inline Code* InterpreterTrampoline() const;
+  inline Code InterpreterTrampoline() const;
   inline bool HasInterpreterData() const;
   inline InterpreterData* interpreter_data() const;
   inline void set_interpreter_data(InterpreterData* interpreter_data);
   inline BytecodeArray* GetDebugBytecodeArray() const;
   inline void SetDebugBytecodeArray(BytecodeArray* bytecode);
   inline bool HasAsmWasmData() const;
-  inline FixedArray* asm_wasm_data() const;
-  inline void set_asm_wasm_data(FixedArray* data);
+  inline AsmWasmData* asm_wasm_data() const;
+  inline void set_asm_wasm_data(AsmWasmData* data);
 
   // A brief note to clear up possible confusion:
   // builtin_id corresponds to the auto-generated
@@ -358,7 +351,7 @@ class SharedFunctionInfo : public HeapObject, public NeverReadOnlySpaceObject {
   inline String* inferred_name();
 
   // Get the function literal id associated with this function, for parsing.
-  inline int FunctionLiteralId(Isolate* isolate) const;
+  V8_EXPORT_PRIVATE int FunctionLiteralId(Isolate* isolate) const;
 
   // Break infos are contained in DebugInfo, this is a convenience method
   // to simplify access.
@@ -482,7 +475,7 @@ class SharedFunctionInfo : public HeapObject, public NeverReadOnlySpaceObject {
   // initializer. This flag is set when creating the
   // SharedFunctionInfo as a reminder to emit the initializer call
   // when generating code later.
-  DECL_BOOLEAN_ACCESSORS(requires_instance_fields_initializer)
+  DECL_BOOLEAN_ACCESSORS(requires_instance_members_initializer)
 
   // [source code]: Source code for the function.
   bool HasSourceCode() const;
@@ -576,7 +569,7 @@ class SharedFunctionInfo : public HeapObject, public NeverReadOnlySpaceObject {
     Script::Iterator script_iterator_;
     WeakArrayList::Iterator noscript_sfi_iterator_;
     SharedFunctionInfo::ScriptIterator sfi_iterator_;
-    DisallowHeapAllocation no_gc_;
+    DISALLOW_HEAP_ALLOCATION(no_gc_);
     DISALLOW_COPY_AND_ASSIGN(GlobalIterator);
   };
 
@@ -597,23 +590,23 @@ class SharedFunctionInfo : public HeapObject, public NeverReadOnlySpaceObject {
 #endif
 
 // Layout description.
-#define SHARED_FUNCTION_INFO_FIELDS(V)                     \
-  /* Pointer fields. */                                    \
-  V(kStartOfPointerFieldsOffset, 0)                        \
-  V(kFunctionDataOffset, kPointerSize)                     \
-  V(kNameOrScopeInfoOffset, kPointerSize)                  \
-  V(kOuterScopeInfoOrFeedbackMetadataOffset, kPointerSize) \
-  V(kScriptOrDebugInfoOffset, kPointerSize)                \
-  V(kEndOfPointerFieldsOffset, 0)                          \
-  /* Raw data fields. */                                   \
-  V(kUniqueIdOffset, kUniqueIdFieldSize)                   \
-  V(kLengthOffset, kUInt16Size)                            \
-  V(kFormalParameterCountOffset, kUInt16Size)              \
-  V(kExpectedNofPropertiesOffset, kUInt8Size)              \
-  V(kBuiltinFunctionId, kUInt8Size)                        \
-  V(kFunctionTokenOffsetOffset, kUInt16Size)               \
-  V(kFlagsOffset, kInt32Size)                              \
-  /* Total size. */                                        \
+#define SHARED_FUNCTION_INFO_FIELDS(V)                    \
+  /* Pointer fields. */                                   \
+  V(kStartOfPointerFieldsOffset, 0)                       \
+  V(kFunctionDataOffset, kTaggedSize)                     \
+  V(kNameOrScopeInfoOffset, kTaggedSize)                  \
+  V(kOuterScopeInfoOrFeedbackMetadataOffset, kTaggedSize) \
+  V(kScriptOrDebugInfoOffset, kTaggedSize)                \
+  V(kEndOfTaggedFieldsOffset, 0)                          \
+  /* Raw data fields. */                                  \
+  V(kUniqueIdOffset, kUniqueIdFieldSize)                  \
+  V(kLengthOffset, kUInt16Size)                           \
+  V(kFormalParameterCountOffset, kUInt16Size)             \
+  V(kExpectedNofPropertiesOffset, kUInt8Size)             \
+  V(kBuiltinFunctionId, kUInt8Size)                       \
+  V(kFunctionTokenOffsetOffset, kUInt16Size)              \
+  V(kFlagsOffset, kInt32Size)                             \
+  /* Total size. */                                       \
   V(kSize, 0)
 
   DEFINE_FIELD_OFFSET_CONSTANTS(HeapObject::kHeaderSize,
@@ -623,10 +616,8 @@ class SharedFunctionInfo : public HeapObject, public NeverReadOnlySpaceObject {
   static const int kAlignedSize = POINTER_SIZE_ALIGN(kSize);
 
   typedef FixedBodyDescriptor<kStartOfPointerFieldsOffset,
-                              kEndOfPointerFieldsOffset, kAlignedSize>
+                              kEndOfTaggedFieldsOffset, kAlignedSize>
       BodyDescriptor;
-  // No weak fields.
-  typedef BodyDescriptor BodyDescriptorWeak;
 
 // Bit positions in |flags|.
 #define FLAGS_BIT_FIELDS(V, _)                           \
@@ -643,7 +634,7 @@ class SharedFunctionInfo : public HeapObject, public NeverReadOnlySpaceObject {
   V(IsAsmWasmBrokenBit, bool, 1, _)                      \
   V(FunctionMapIndexBits, int, 5, _)                     \
   V(DisabledOptimizationReasonBits, BailoutReason, 4, _) \
-  V(RequiresInstanceFieldsInitializer, bool, 1, _)       \
+  V(RequiresInstanceMembersInitializer, bool, 1, _)      \
   V(ConstructAsBuiltinBit, bool, 1, _)                   \
   V(IsAnonymousExpressionBit, bool, 1, _)                \
   V(NameShouldPrintAsAnonymousBit, bool, 1, _)           \

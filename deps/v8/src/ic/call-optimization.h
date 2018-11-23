@@ -12,13 +12,13 @@
 namespace v8 {
 namespace internal {
 // Holds information about possible function call optimizations.
-class CallOptimization BASE_EMBEDDED {
+class CallOptimization {
  public:
   CallOptimization(Isolate* isolate, Handle<Object> function);
 
-  Context* GetAccessorContext(Map* holder_map) const;
-  bool IsCrossContextLazyAccessorPair(Context* native_context,
-                                      Map* holder_map) const;
+  Context GetAccessorContext(Map holder_map) const;
+  bool IsCrossContextLazyAccessorPair(Context native_context,
+                                      Map holder_map) const;
 
   bool is_constant_call() const { return !constant_function_.is_null(); }
 

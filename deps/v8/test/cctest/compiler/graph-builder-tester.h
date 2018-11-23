@@ -5,8 +5,8 @@
 #ifndef V8_CCTEST_COMPILER_GRAPH_BUILDER_TESTER_H_
 #define V8_CCTEST_COMPILER_GRAPH_BUILDER_TESTER_H_
 
+#include "src/compiler/backend/instruction-selector.h"
 #include "src/compiler/common-operator.h"
-#include "src/compiler/instruction-selector.h"
 #include "src/compiler/linkage.h"
 #include "src/compiler/machine-operator.h"
 #include "src/compiler/operator-properties.h"
@@ -62,7 +62,7 @@ class GraphBuilderTester : public HandleAndZoneScope,
     Begin(static_cast<int>(parameter_count()));
     InitParameters();
   }
-  virtual ~GraphBuilderTester() {}
+  ~GraphBuilderTester() override = default;
 
   void GenerateCode() { Generate(); }
   Node* Parameter(size_t index) {

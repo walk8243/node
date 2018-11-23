@@ -11,6 +11,7 @@
 #include "src/handles-inl.h"
 #include "src/heap/factory.h"
 #include "src/objects/name-inl.h"
+#include "src/objects/smi-inl.h"
 #include "src/string-hasher-inl.h"
 
 // Has to be the last include (doesn't have include guards):
@@ -19,8 +20,17 @@
 namespace v8 {
 namespace internal {
 
-SMI_ACCESSORS(String, length, kLengthOffset)
-SYNCHRONIZED_SMI_ACCESSORS(String, length, kLengthOffset)
+INT32_ACCESSORS(String, length, kLengthOffset)
+
+int String::synchronized_length() const {
+  return base::AsAtomic32::Acquire_Load(
+      reinterpret_cast<const int32_t*>(FIELD_ADDR(this, kLengthOffset)));
+}
+
+void String::synchronized_set_length(int value) {
+  base::AsAtomic32::Release_Store(
+      reinterpret_cast<int32_t*>(FIELD_ADDR(this, kLengthOffset)), value);
+}
 
 CAST_ACCESSOR(ConsString)
 CAST_ACCESSOR(ExternalOneByteString)
@@ -40,7 +50,7 @@ StringShape::StringShape(const String* str)
   DCHECK_EQ(type_ & kIsNotStringMask, kStringTag);
 }
 
-StringShape::StringShape(Map* map) : type_(map->instance_type()) {
+StringShape::StringShape(Map map) : type_(map->instance_type()) {
   set_valid();
   DCHECK_EQ(type_ & kIsNotStringMask, kStringTag);
 }
@@ -363,8 +373,10 @@ String* String::GetUnderlying() {
   // wrapping string is already flattened.
   DCHECK(this->IsFlat());
   DCHECK(StringShape(this).IsIndirect());
-  STATIC_ASSERT(ConsString::kFirstOffset == SlicedString::kParentOffset);
-  STATIC_ASSERT(ConsString::kFirstOffset == ThinString::kActualOffset);
+  STATIC_ASSERT(static_cast<int>(ConsString::kFirstOffset) ==
+                static_cast<int>(SlicedString::kParentOffset));
+  STATIC_ASSERT(static_cast<int>(ConsString::kFirstOffset) ==
+                static_cast<int>(ThinString::kActualOffset));
   const int kUnderlyingOffset = SlicedString::kParentOffset;
   return String::cast(READ_FIELD(this, kUnderlyingOffset));
 }
@@ -536,9 +548,9 @@ HeapObject* ThinString::unchecked_actual() const {
   return reinterpret_cast<HeapObject*>(READ_FIELD(this, kActualOffset));
 }
 
-bool ExternalString::is_short() const {
+bool ExternalString::is_uncached() const {
   InstanceType type = map()->instance_type();
-  return (type & kShortExternalStringMask) == kShortExternalStringTag;
+  return (type & kUncachedExternalStringMask) == kUncachedExternalStringTag;
 }
 
 Address ExternalString::resource_as_address() {
@@ -546,7 +558,6 @@ Address ExternalString::resource_as_address() {
 }
 
 void ExternalString::set_address_as_resource(Address address) {
-  DCHECK(IsAligned(address, kPointerSize));
   *reinterpret_cast<Address*>(FIELD_ADDR(this, kResourceOffset)) = address;
   if (IsExternalOneByteString()) {
     ExternalOneByteString::cast(this)->update_data_cache();
@@ -562,7 +573,7 @@ uint32_t ExternalString::resource_as_uint32() {
 
 void ExternalString::set_uint32_as_resource(uint32_t value) {
   *reinterpret_cast<uintptr_t*>(FIELD_ADDR(this, kResourceOffset)) = value;
-  if (is_short()) return;
+  if (is_uncached()) return;
   const char** data_field =
       reinterpret_cast<const char**>(FIELD_ADDR(this, kResourceDataOffset));
   *data_field = nullptr;
@@ -573,7 +584,7 @@ const ExternalOneByteString::Resource* ExternalOneByteString::resource() {
 }
 
 void ExternalOneByteString::update_data_cache() {
-  if (is_short()) return;
+  if (is_uncached()) return;
   const char** data_field =
       reinterpret_cast<const char**>(FIELD_ADDR(this, kResourceDataOffset));
   *data_field = resource()->data();
@@ -589,7 +600,6 @@ void ExternalOneByteString::SetResource(
 
 void ExternalOneByteString::set_resource(
     const ExternalOneByteString::Resource* resource) {
-  DCHECK(IsAligned(reinterpret_cast<intptr_t>(resource), kPointerSize));
   *reinterpret_cast<const Resource**>(FIELD_ADDR(this, kResourceOffset)) =
       resource;
   if (resource != nullptr) update_data_cache();
@@ -609,7 +619,7 @@ const ExternalTwoByteString::Resource* ExternalTwoByteString::resource() {
 }
 
 void ExternalTwoByteString::update_data_cache() {
-  if (is_short()) return;
+  if (is_uncached()) return;
   const uint16_t** data_field =
       reinterpret_cast<const uint16_t**>(FIELD_ADDR(this, kResourceDataOffset));
   *data_field = resource()->data();
@@ -733,8 +743,7 @@ class String::SubStringRange::iterator final {
   typedef uc16* pointer;
   typedef uc16& reference;
 
-  iterator(const iterator& other)
-      : content_(other.content_), offset_(other.offset_) {}
+  iterator(const iterator& other) = default;
 
   uc16 operator*() { return content_.Get(offset_); }
   bool operator==(const iterator& other) const {

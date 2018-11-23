@@ -2,13 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef INCLUDED_FROM_MACRO_ASSEMBLER_H
+#error This header must be included via macro-assembler.h
+#endif
+
 #ifndef V8_X64_MACRO_ASSEMBLER_X64_H_
 #define V8_X64_MACRO_ASSEMBLER_X64_H_
 
 #include "src/bailout-reason.h"
 #include "src/base/flags.h"
+#include "src/contexts.h"
 #include "src/globals.h"
-#include "src/turbo-assembler.h"
 #include "src/x64/assembler-x64.h"
 
 namespace v8 {
@@ -50,6 +54,8 @@ constexpr Register kOffHeapTrampolineRegister = kScratchRegister;
 // Convenience for platform-independent signatures.
 typedef Operand MemOperand;
 
+class StringConstantBase;
+
 enum RememberedSetAction { EMIT_REMEMBERED_SET, OMIT_REMEMBERED_SET };
 enum SmiCheck { INLINE_SMI_CHECK, OMIT_SMI_CHECK };
 
@@ -66,7 +72,7 @@ enum StackArgumentsAccessorReceiverMode {
   ARGUMENTS_DONT_CONTAIN_RECEIVER
 };
 
-class StackArgumentsAccessor BASE_EMBEDDED {
+class StackArgumentsAccessor {
  public:
   StackArgumentsAccessor(Register base_reg, int argument_count_immediate,
                          StackArgumentsAccessorReceiverMode receiver_mode =
@@ -114,6 +120,9 @@ class StackArgumentsAccessor BASE_EMBEDDED {
 
 class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
  public:
+  TurboAssembler(const AssemblerOptions& options, void* buffer, int buffer_size)
+      : TurboAssemblerBase(options, buffer, buffer_size) {}
+
   TurboAssembler(Isolate* isolate, const AssemblerOptions& options,
                  void* buffer, int buffer_size,
                  CodeObjectRequired create_code_object)
@@ -215,8 +224,8 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
   void Set(Operand dst, intptr_t x);
 
   // Operations on roots in the root-array.
-  void LoadRoot(Register destination, Heap::RootListIndex index) override;
-  void LoadRoot(Operand destination, Heap::RootListIndex index) {
+  void LoadRoot(Register destination, RootIndex index) override;
+  void LoadRoot(Operand destination, RootIndex index) {
     LoadRoot(kScratchRegister, index);
     movp(destination, kScratchRegister);
   }
@@ -224,7 +233,7 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
   void Push(Register src);
   void Push(Operand src);
   void Push(Immediate value);
-  void Push(Smi* smi);
+  void Push(Smi smi);
   void Push(Handle<HeapObject> source);
 
   // Before calling a C-function from generated code, align arguments on stack.
@@ -320,9 +329,9 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
     j(less, dest);
   }
 
-  void Move(Register dst, Smi* source);
+  void Move(Register dst, Smi source);
 
-  void Move(Operand dst, Smi* source) {
+  void Move(Operand dst, Smi source) {
     Register constant = GetSmiConstant(source);
     movp(dst, constant);
   }
@@ -350,6 +359,9 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
     movp(dst, ptr, rmode);
   }
 
+  void MoveStringConstant(Register result, const StringConstantBase* string,
+                          RelocInfo::Mode rmode = RelocInfo::EMBEDDED_OBJECT);
+
   // Convert smi to word-size sign-extended value.
   void SmiUntag(Register dst, Register src);
   void SmiUntag(Register dst, Operand src);
@@ -369,8 +381,8 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
   // isn't changed.
   // If the operand is used more than once, use a scratch register
   // that is guaranteed not to be clobbered.
-  Operand ExternalOperand(ExternalReference reference,
-                          Register scratch = kScratchRegister);
+  Operand ExternalReferenceAsOperand(ExternalReference reference,
+                                     Register scratch = kScratchRegister);
 
   void Call(Register reg) { call(reg); }
   void Call(Operand op);
@@ -401,8 +413,8 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
   void Pinsrd(XMMRegister dst, Register src, int8_t imm8);
   void Pinsrd(XMMRegister dst, Operand src, int8_t imm8);
 
-  void CompareRoot(Register with, Heap::RootListIndex index);
-  void CompareRoot(Operand with, Heap::RootListIndex index);
+  void CompareRoot(Register with, RootIndex index);
+  void CompareRoot(Operand with, RootIndex index);
 
   // Generates function and stub prologue code.
   void StubPrologue(StackFrame::Type type);
@@ -457,10 +469,8 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
   void CallRuntimeWithCEntry(Runtime::FunctionId fid, Register centry);
 
   void InitializeRootRegister() {
-    ExternalReference roots_array_start =
-        ExternalReference::roots_array_start(isolate());
-    Move(kRootRegister, roots_array_start);
-    addp(kRootRegister, Immediate(kRootRegisterBias));
+    ExternalReference isolate_root = ExternalReference::isolate_root(isolate());
+    Move(kRootRegister, isolate_root);
   }
 
   void SaveRegisters(RegList registers);
@@ -469,6 +479,9 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
   void CallRecordWriteStub(Register object, Register address,
                            RememberedSetAction remembered_set_action,
                            SaveFPRegsMode fp_mode);
+  void CallRecordWriteStub(Register object, Register address,
+                           RememberedSetAction remembered_set_action,
+                           SaveFPRegsMode fp_mode, Address wasm_target);
 
   void MoveNumber(Register dst, double value);
   void MoveNonSmi(Register dst, double value);
@@ -502,26 +515,43 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
 
   void ResetSpeculationPoisonRegister();
 
+  // ---------------------------------------------------------------------------
+  // Pointer compresstion Support
+
+  // TODO(ishell): remove |scratch_for_debug| once pointer compression works.
+  void DecompressTaggedSigned(Register destination, Operand field_operand,
+                              Register scratch_for_debug);
+  void DecompressTaggedPointer(Register destination, Operand field_operand,
+                               Register scratch_for_debug);
+  void DecompressAnyTagged(Register destination, Operand field_operand,
+                           Register scratch, Register scratch_for_debug);
+
  protected:
   static const int kSmiShift = kSmiTagSize + kSmiShiftSize;
   int smi_count = 0;
   int heap_object_count = 0;
 
-  int64_t RootRegisterDelta(ExternalReference other);
-
   // Returns a register holding the smi value. The register MUST NOT be
   // modified. It may be the "smi 1 constant" register.
-  Register GetSmiConstant(Smi* value);
+  Register GetSmiConstant(Smi value);
+
+  void CallRecordWriteStub(Register object, Register address,
+                           RememberedSetAction remembered_set_action,
+                           SaveFPRegsMode fp_mode, Handle<Code> code_target,
+                           Address wasm_target);
 };
 
 // MacroAssembler implements a collection of frequently used macros.
 class MacroAssembler : public TurboAssembler {
  public:
-  // TODO(titzer): inline this utility constructor.
+  MacroAssembler(const AssemblerOptions& options, void* buffer, int size)
+      : TurboAssembler(options, buffer, size) {}
+
   MacroAssembler(Isolate* isolate, void* buffer, int size,
                  CodeObjectRequired create_code_object)
       : MacroAssembler(isolate, AssemblerOptions::Default(isolate), buffer,
                        size, create_code_object) {}
+
   MacroAssembler(Isolate* isolate, const AssemblerOptions& options,
                  void* buffer, int size, CodeObjectRequired create_code_object);
 
@@ -529,7 +559,7 @@ class MacroAssembler : public TurboAssembler {
   // Special case code for load and store to take advantage of
   // load_rax/store_rax if possible/necessary.
   // For other operations, just use:
-  //   Operand operand = ExternalOperand(extref);
+  //   Operand operand = ExternalReferenceAsOperand(extref);
   //   operation(operand, ..);
   void Load(Register destination, ExternalReference source);
   void Store(ExternalReference destination, Register source);
@@ -541,37 +571,34 @@ class MacroAssembler : public TurboAssembler {
   // Load a root value where the index (or part of it) is variable.
   // The variable_offset register is added to the fixed_offset value
   // to get the index into the root-array.
-  void PushRoot(Heap::RootListIndex index);
+  void PushRoot(RootIndex index);
 
   // Compare the object in a register to a value and jump if they are equal.
-  void JumpIfRoot(Register with, Heap::RootListIndex index, Label* if_equal,
+  void JumpIfRoot(Register with, RootIndex index, Label* if_equal,
                   Label::Distance if_equal_distance = Label::kFar) {
     CompareRoot(with, index);
     j(equal, if_equal, if_equal_distance);
   }
-  void JumpIfRoot(Operand with, Heap::RootListIndex index, Label* if_equal,
+  void JumpIfRoot(Operand with, RootIndex index, Label* if_equal,
                   Label::Distance if_equal_distance = Label::kFar) {
     CompareRoot(with, index);
     j(equal, if_equal, if_equal_distance);
   }
 
   // Compare the object in a register to a value and jump if they are not equal.
-  void JumpIfNotRoot(Register with, Heap::RootListIndex index,
-                     Label* if_not_equal,
+  void JumpIfNotRoot(Register with, RootIndex index, Label* if_not_equal,
                      Label::Distance if_not_equal_distance = Label::kFar) {
     CompareRoot(with, index);
     j(not_equal, if_not_equal, if_not_equal_distance);
   }
-  void JumpIfNotRoot(Operand with, Heap::RootListIndex index,
-                     Label* if_not_equal,
+  void JumpIfNotRoot(Operand with, RootIndex index, Label* if_not_equal,
                      Label::Distance if_not_equal_distance = Label::kFar) {
     CompareRoot(with, index);
     j(not_equal, if_not_equal, if_not_equal_distance);
   }
 
-
-// ---------------------------------------------------------------------------
-// GC Support
+  // ---------------------------------------------------------------------------
+  // GC Support
 
   // Notify the garbage collector that we wrote a pointer into an object.
   // |object| is the object being stored into, |value| is the object being
@@ -655,10 +682,10 @@ class MacroAssembler : public TurboAssembler {
   // Simple comparison of smis.  Both sides must be known smis to use these,
   // otherwise use Cmp.
   void SmiCompare(Register smi1, Register smi2);
-  void SmiCompare(Register dst, Smi* src);
+  void SmiCompare(Register dst, Smi src);
   void SmiCompare(Register dst, Operand src);
   void SmiCompare(Operand dst, Register src);
-  void SmiCompare(Operand dst, Smi* src);
+  void SmiCompare(Operand dst, Smi src);
 
   // Functions performing a check on a known or potential smi. Returns
   // a condition that is satisfied if the check is successful.
@@ -682,7 +709,7 @@ class MacroAssembler : public TurboAssembler {
 
   // Add an integer constant to a tagged smi, giving a tagged smi as result.
   // No overflow testing on the result is done.
-  void SmiAddConstant(Operand dst, Smi* constant);
+  void SmiAddConstant(Operand dst, Smi constant);
 
   // Specialized operations
 
@@ -705,8 +732,8 @@ class MacroAssembler : public TurboAssembler {
 
   void Cmp(Register dst, Handle<Object> source);
   void Cmp(Operand dst, Handle<Object> source);
-  void Cmp(Register dst, Smi* src);
-  void Cmp(Operand dst, Smi* src);
+  void Cmp(Register dst, Smi src);
+  void Cmp(Operand dst, Smi src);
 
   // Emit code to discard a non-negative number of pointer-sized elements
   // from the stack, clobbering only the rsp register.
@@ -859,9 +886,6 @@ class MacroAssembler : public TurboAssembler {
   static int SafepointRegisterStackIndex(Register reg) {
     return SafepointRegisterStackIndex(reg.code());
   }
-
-  void EnterBuiltinFrame(Register context, Register target, Register argc);
-  void LeaveBuiltinFrame(Register context, Register target, Register argc);
 
  private:
   // Order general registers are pushed by Pushad.

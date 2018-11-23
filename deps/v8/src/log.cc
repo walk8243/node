@@ -16,7 +16,6 @@
 #include "src/counters.h"
 #include "src/deoptimizer.h"
 #include "src/global-handles.h"
-#include "src/instruction-stream.h"
 #include "src/interpreter/bytecodes.h"
 #include "src/interpreter/interpreter.h"
 #include "src/libsampler/sampler.h"
@@ -26,6 +25,7 @@
 #include "src/perf-jit.h"
 #include "src/profiler/tick-sample.h"
 #include "src/runtime-profiler.h"
+#include "src/snapshot/embedded-data.h"
 #include "src/source-position-table.h"
 #include "src/string-stream.h"
 #include "src/tracing/tracing-category-observer.h"
@@ -349,7 +349,6 @@ void ExternalCodeEventListener::LogExistingCode() {
   HandleScope scope(isolate_);
   ExistingCodeLogger logger(isolate_, this);
   logger.LogCodeObjects();
-  logger.LogBytecodeHandlers();
   logger.LogCompiledFunctions();
 }
 
@@ -655,7 +654,7 @@ void JitLogger::LogRecordedBuffer(AbstractCode* code,
                                   SharedFunctionInfo* shared, const char* name,
                                   int length) {
   JitCodeEvent event;
-  memset(&event, 0, sizeof(event));
+  memset(static_cast<void*>(&event), 0, sizeof(event));
   event.type = JitCodeEvent::CODE_ADDED;
   event.code_start = reinterpret_cast<void*>(code->InstructionStart());
   event.code_type =
@@ -676,7 +675,7 @@ void JitLogger::LogRecordedBuffer(AbstractCode* code,
 void JitLogger::LogRecordedBuffer(const wasm::WasmCode* code, const char* name,
                                   int length) {
   JitCodeEvent event;
-  memset(&event, 0, sizeof(event));
+  memset(static_cast<void*>(&event), 0, sizeof(event));
   event.type = JitCodeEvent::CODE_ADDED;
   event.code_type = JitCodeEvent::JIT_CODE;
   event.code_start = code->instructions().start();
@@ -688,7 +687,7 @@ void JitLogger::LogRecordedBuffer(const wasm::WasmCode* code, const char* name,
 }
 
 void JitLogger::CodeMoveEvent(AbstractCode* from, AbstractCode* to) {
-  base::LockGuard<base::Mutex> guard(&logger_mutex_);
+  base::MutexGuard guard(&logger_mutex_);
 
   JitCodeEvent event;
   event.type = JitCodeEvent::CODE_MOVED;
@@ -708,7 +707,7 @@ void JitLogger::AddCodeLinePosInfoEvent(
     int position,
     JitCodeEvent::PositionType position_type) {
   JitCodeEvent event;
-  memset(&event, 0, sizeof(event));
+  memset(static_cast<void*>(&event), 0, sizeof(event));
   event.type = JitCodeEvent::CODE_ADD_LINE_POS_INFO;
   event.user_data = jit_handler_data;
   event.line_info.offset = pc_offset;
@@ -722,7 +721,7 @@ void JitLogger::AddCodeLinePosInfoEvent(
 
 void* JitLogger::StartCodePosInfoEvent() {
   JitCodeEvent event;
-  memset(&event, 0, sizeof(event));
+  memset(static_cast<void*>(&event), 0, sizeof(event));
   event.type = JitCodeEvent::CODE_START_LINE_INFO_RECORDING;
   event.isolate = reinterpret_cast<v8::Isolate*>(isolate_);
 
@@ -733,7 +732,7 @@ void* JitLogger::StartCodePosInfoEvent() {
 void JitLogger::EndCodePosInfoEvent(Address start_address,
                                     void* jit_handler_data) {
   JitCodeEvent event;
-  memset(&event, 0, sizeof(event));
+  memset(static_cast<void*>(&event), 0, sizeof(event));
   event.type = JitCodeEvent::CODE_END_LINE_INFO_RECORDING;
   event.code_start = reinterpret_cast<void*>(start_address);
   event.user_data = jit_handler_data;
@@ -794,7 +793,7 @@ class Profiler: public base::Thread {
     }
   }
 
-  virtual void Run();
+  void Run() override;
 
   // Pause and Resume TickSample data collection.
   void Pause() { paused_ = true; }
@@ -848,7 +847,7 @@ class Ticker: public sampler::Sampler {
         profiler_(nullptr),
         sampling_thread_(new SamplingThread(this, interval_microseconds)) {}
 
-  ~Ticker() {
+  ~Ticker() override {
     if (IsActive()) Stop();
     delete sampling_thread_;
   }
@@ -1015,11 +1014,10 @@ void Logger::UncheckedIntPtrTEvent(const char* name, intptr_t value) {
   msg.WriteToLogFile();
 }
 
-
-void Logger::HandleEvent(const char* name, Object** location) {
+void Logger::HandleEvent(const char* name, Address* location) {
   if (!log_->IsEnabled() || !FLAG_log_handles) return;
   Log::MessageBuilder msg(log_);
-  msg << name << kNext << static_cast<void*>(location);
+  msg << name << kNext << reinterpret_cast<void*>(location);
   msg.WriteToLogFile();
 }
 
@@ -1042,7 +1040,7 @@ void Logger::SharedLibraryEvent(const std::string& library_path,
   msg.WriteToLogFile();
 }
 
-void Logger::CodeDeoptEvent(Code* code, DeoptimizeKind kind, Address pc,
+void Logger::CodeDeoptEvent(Code code, DeoptimizeKind kind, Address pc,
                             int fp_to_sp_delta) {
   if (!log_->IsEnabled()) return;
   Deoptimizer::DeoptInfo info = Deoptimizer::GetDeoptInfo(code, pc);
@@ -1323,7 +1321,7 @@ void Logger::CodeCreateEvent(CodeEventListener::LogEventsAndTags tag,
   //        <script-offset> is the position within the script
   //        <inlining-id> is the offset in the <inlining> table
   //   <inlining> table is a sequence of strings of the form
-  //      F<function-id>O<script-offset>[I<inlining-id>
+  //      F<function-id>O<script-offset>[I<inlining-id>]
   //      where
   //         <function-id> is an index into the <fns> function table
   //   <fns> is the function table encoded as a sequence of strings
@@ -1335,12 +1333,8 @@ void Logger::CodeCreateEvent(CodeEventListener::LogEventsAndTags tag,
       << shared->EndPosition() << kNext;
 
   SourcePositionTableIterator iterator(code->source_position_table());
-  bool is_first = true;
   bool hasInlined = false;
   for (; !iterator.done(); iterator.Advance()) {
-    if (is_first) {
-      is_first = false;
-    }
     SourcePosition pos = iterator.source_position();
     msg << "C" << iterator.code_offset() << "O" << pos.ScriptOffset();
     if (pos.isInlined()) {
@@ -1604,7 +1598,7 @@ bool Logger::EnsureLogScriptSource(Script* script) {
   // Make sure the script is written to the log file.
   int script_id = script->id();
   if (logged_source_code_.find(script_id) != logged_source_code_.end()) {
-    return false;
+    return true;
   }
   // This script has not been logged yet.
   logged_source_code_.insert(script_id);
@@ -1659,7 +1653,7 @@ void Logger::TickEvent(v8::TickSample* sample, bool overflow) {
   msg.WriteToLogFile();
 }
 
-void Logger::ICEvent(const char* type, bool keyed, Map* map, Object* key,
+void Logger::ICEvent(const char* type, bool keyed, Map map, Object* key,
                      char old_state, char new_state, const char* modifier,
                      const char* slow_stub_reason) {
   if (!log_->IsEnabled() || !FLAG_trace_ic) return;
@@ -1670,7 +1664,7 @@ void Logger::ICEvent(const char* type, bool keyed, Map* map, Object* key,
   Address pc = isolate_->GetAbstractPC(&line, &column);
   msg << type << kNext << reinterpret_cast<void*>(pc) << kNext << line << kNext
       << column << kNext << old_state << kNext << new_state << kNext
-      << reinterpret_cast<void*>(map) << kNext;
+      << reinterpret_cast<void*>(map.ptr()) << kNext;
   if (key->IsSmi()) {
     msg << Smi::ToInt(key);
   } else if (key->IsNumber()) {
@@ -1685,11 +1679,11 @@ void Logger::ICEvent(const char* type, bool keyed, Map* map, Object* key,
   msg.WriteToLogFile();
 }
 
-void Logger::MapEvent(const char* type, Map* from, Map* to, const char* reason,
+void Logger::MapEvent(const char* type, Map from, Map to, const char* reason,
                       HeapObject* name_or_sfi) {
   DisallowHeapAllocation no_gc;
   if (!log_->IsEnabled() || !FLAG_trace_maps) return;
-  if (to) MapDetails(to);
+  if (!to.is_null()) MapDetails(to);
   int line = -1;
   int column = -1;
   Address pc = 0;
@@ -1699,9 +1693,10 @@ void Logger::MapEvent(const char* type, Map* from, Map* to, const char* reason,
   }
   Log::MessageBuilder msg(log_);
   msg << "map" << kNext << type << kNext << timer_.Elapsed().InMicroseconds()
-      << kNext << reinterpret_cast<void*>(from) << kNext
-      << reinterpret_cast<void*>(to) << kNext << reinterpret_cast<void*>(pc)
-      << kNext << line << kNext << column << kNext << reason << kNext;
+      << kNext << reinterpret_cast<void*>(from.ptr()) << kNext
+      << reinterpret_cast<void*>(to.ptr()) << kNext
+      << reinterpret_cast<void*>(pc) << kNext << line << kNext << column
+      << kNext << reason << kNext;
 
   if (name_or_sfi) {
     if (name_or_sfi->IsName()) {
@@ -1717,16 +1712,16 @@ void Logger::MapEvent(const char* type, Map* from, Map* to, const char* reason,
   msg.WriteToLogFile();
 }
 
-void Logger::MapCreate(Map* map) {
+void Logger::MapCreate(Map map) {
   if (!log_->IsEnabled() || !FLAG_trace_maps) return;
   DisallowHeapAllocation no_gc;
   Log::MessageBuilder msg(log_);
   msg << "map-create" << kNext << timer_.Elapsed().InMicroseconds() << kNext
-      << reinterpret_cast<void*>(map);
+      << reinterpret_cast<void*>(map.ptr());
   msg.WriteToLogFile();
 }
 
-void Logger::MapDetails(Map* map) {
+void Logger::MapDetails(Map map) {
   if (!log_->IsEnabled() || !FLAG_trace_maps) return;
   // Disable logging Map details during bootstrapping since we use LogMaps() to
   // log all creating
@@ -1734,7 +1729,7 @@ void Logger::MapDetails(Map* map) {
   DisallowHeapAllocation no_gc;
   Log::MessageBuilder msg(log_);
   msg << "map-details" << kNext << timer_.Elapsed().InMicroseconds() << kNext
-      << reinterpret_cast<void*>(map) << kNext;
+      << reinterpret_cast<void*>(map.ptr()) << kNext;
   if (FLAG_trace_maps_details) {
     std::ostringstream buffer;
     map->PrintMapDetails(buffer);
@@ -1837,16 +1832,6 @@ void Logger::LogCodeObject(Object* object) {
 }
 
 void Logger::LogCodeObjects() { existing_code_logger_.LogCodeObjects(); }
-
-void Logger::LogBytecodeHandler(interpreter::Bytecode bytecode,
-                                interpreter::OperandScale operand_scale,
-                                Code* code) {
-  existing_code_logger_.LogBytecodeHandler(bytecode, operand_scale, code);
-}
-
-void Logger::LogBytecodeHandlers() {
-  existing_code_logger_.LogBytecodeHandlers();
-}
 
 void Logger::LogExistingFunction(Handle<SharedFunctionInfo> shared,
                                  Handle<AbstractCode> code) {
@@ -2159,37 +2144,6 @@ void ExistingCodeLogger::LogCompiledFunctions() {
   EnumerateWasmModuleObjects(heap, module_objects.get());
   for (int i = 0; i < wasm_module_objects_count; ++i) {
     module_objects[i]->native_module()->LogWasmCodes(isolate_);
-  }
-}
-
-void ExistingCodeLogger::LogBytecodeHandler(
-    interpreter::Bytecode bytecode, interpreter::OperandScale operand_scale,
-    Code* code) {
-  std::string bytecode_name =
-      interpreter::Bytecodes::ToString(bytecode, operand_scale);
-  CALL_CODE_EVENT_HANDLER(
-      CodeCreateEvent(CodeEventListener::BYTECODE_HANDLER_TAG,
-                      AbstractCode::cast(code), bytecode_name.c_str()))
-}
-
-void ExistingCodeLogger::LogBytecodeHandlers() {
-  const interpreter::OperandScale kOperandScales[] = {
-#define VALUE(Name, _) interpreter::OperandScale::k##Name,
-      OPERAND_SCALE_LIST(VALUE)
-#undef VALUE
-  };
-
-  const int last_index = static_cast<int>(interpreter::Bytecode::kLast);
-  interpreter::Interpreter* interpreter = isolate_->interpreter();
-  for (auto operand_scale : kOperandScales) {
-    for (int index = 0; index <= last_index; ++index) {
-      interpreter::Bytecode bytecode = interpreter::Bytecodes::FromByte(index);
-      if (interpreter::Bytecodes::BytecodeHasHandler(bytecode, operand_scale)) {
-        Code* code = interpreter->GetBytecodeHandler(bytecode, operand_scale);
-        if (isolate_->heap()->IsDeserializeLazyHandler(code)) continue;
-        LogBytecodeHandler(bytecode, operand_scale, code);
-      }
-    }
   }
 }
 

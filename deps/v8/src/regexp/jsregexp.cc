@@ -14,7 +14,7 @@
 #include "src/execution.h"
 #include "src/heap/factory.h"
 #include "src/isolate-inl.h"
-#include "src/messages.h"
+#include "src/message-template.h"
 #include "src/ostreams.h"
 #include "src/regexp/interpreter-irregexp.h"
 #include "src/regexp/jsregexp-inl.h"
@@ -397,8 +397,7 @@ ByteArray* RegExpImpl::IrregexpByteCode(FixedArray* re, bool is_one_byte) {
   return ByteArray::cast(re->get(JSRegExp::code_index(is_one_byte)));
 }
 
-
-Code* RegExpImpl::IrregexpNativeCode(FixedArray* re, bool is_one_byte) {
+Code RegExpImpl::IrregexpNativeCode(FixedArray* re, bool is_one_byte) {
   return Code::cast(re->get(JSRegExp::code_index(is_one_byte)));
 }
 
@@ -2168,10 +2167,7 @@ static void EmitCharClass(RegExpMacroAssembler* macro_assembler,
   macro_assembler->Bind(&fall_through);
 }
 
-
-RegExpNode::~RegExpNode() {
-}
-
+RegExpNode::~RegExpNode() = default;
 
 RegExpNode::LimitResult RegExpNode::LimitVersions(RegExpCompiler* compiler,
                                                   Trace* trace) {

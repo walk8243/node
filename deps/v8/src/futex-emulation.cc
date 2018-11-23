@@ -33,7 +33,7 @@ void FutexWaitListNode::NotifyWake() {
   // interrupts, or if FutexEmulation::Wait was just called and the mutex
   // hasn't been locked yet. In either of those cases, we set the interrupted
   // flag to true, which will be tested after the mutex is re-locked.
-  base::LockGuard<base::Mutex> lock_guard(FutexEmulation::mutex_.Pointer());
+  base::MutexGuard lock_guard(FutexEmulation::mutex_.Pointer());
   if (waiting_) {
     cond_.NotifyOne();
     interrupted_ = true;
@@ -80,16 +80,38 @@ void AtomicsWaitWakeHandle::Wake() {
   // The split lock by itself isn’t an issue, as long as the caller properly
   // synchronizes this with the closing `AtomicsWaitCallback`.
   {
-    base::LockGuard<base::Mutex> lock_guard(FutexEmulation::mutex_.Pointer());
+    base::MutexGuard lock_guard(FutexEmulation::mutex_.Pointer());
     stopped_ = true;
   }
   isolate_->futex_wait_list_node()->NotifyWake();
 }
 
+enum WaitReturnValue : int { kOk = 0, kNotEqual = 1, kTimedOut = 2 };
+
+Object* FutexEmulation::WaitJs(Isolate* isolate,
+                               Handle<JSArrayBuffer> array_buffer, size_t addr,
+                               int32_t value, double rel_timeout_ms) {
+  Object* res = Wait(isolate, array_buffer, addr, value, rel_timeout_ms);
+  if (res->IsSmi()) {
+    int val = Smi::ToInt(res);
+    switch (val) {
+      case WaitReturnValue::kOk:
+        return ReadOnlyRoots(isolate).ok();
+      case WaitReturnValue::kNotEqual:
+        return ReadOnlyRoots(isolate).not_equal();
+      case WaitReturnValue::kTimedOut:
+        return ReadOnlyRoots(isolate).timed_out();
+      default:
+        UNREACHABLE();
+    }
+  }
+  return res;
+}
+
 Object* FutexEmulation::Wait(Isolate* isolate,
                              Handle<JSArrayBuffer> array_buffer, size_t addr,
                              int32_t value, double rel_timeout_ms) {
-  DCHECK(addr < NumberToSize(array_buffer->byte_length()));
+  DCHECK_LT(addr, array_buffer->byte_length());
 
   void* backing_store = array_buffer->backing_store();
   int32_t* p =
@@ -133,13 +155,13 @@ Object* FutexEmulation::Wait(Isolate* isolate,
   AtomicsWaitEvent callback_result = AtomicsWaitEvent::kWokenUp;
 
   do {  // Not really a loop, just makes it easier to break out early.
-    base::LockGuard<base::Mutex> lock_guard(mutex_.Pointer());
+    base::MutexGuard lock_guard(mutex_.Pointer());
     // Reset node->waiting_ = false when leaving this scope (but while
     // still holding the lock).
     ResetWaitingOnScopeExit reset_waiting(node);
 
     if (*p != value) {
-      result = ReadOnlyRoots(isolate).not_equal();
+      result = Smi::FromInt(WaitReturnValue::kNotEqual);
       callback_result = AtomicsWaitEvent::kNotEqual;
       break;
     }
@@ -197,7 +219,7 @@ Object* FutexEmulation::Wait(Isolate* isolate,
       }
 
       if (!node->waiting_) {
-        result = ReadOnlyRoots(isolate).ok();
+        result = Smi::FromInt(WaitReturnValue::kOk);
         break;
       }
 
@@ -205,7 +227,7 @@ Object* FutexEmulation::Wait(Isolate* isolate,
       if (use_timeout) {
         current_time = base::TimeTicks::Now();
         if (current_time >= timeout_time) {
-          result = ReadOnlyRoots(isolate).timed_out();
+          result = Smi::FromInt(WaitReturnValue::kTimedOut);
           callback_result = AtomicsWaitEvent::kTimedOut;
           break;
         }
@@ -223,7 +245,7 @@ Object* FutexEmulation::Wait(Isolate* isolate,
     }
 
     wait_list_.Pointer()->RemoveNode(node);
-  } while (0);
+  } while (false);
 
   isolate->RunAtomicsWaitCallback(callback_result, array_buffer, addr, value,
                                   rel_timeout_ms, nullptr);
@@ -238,12 +260,12 @@ Object* FutexEmulation::Wait(Isolate* isolate,
 
 Object* FutexEmulation::Wake(Handle<JSArrayBuffer> array_buffer, size_t addr,
                              uint32_t num_waiters_to_wake) {
-  DCHECK(addr < NumberToSize(array_buffer->byte_length()));
+  DCHECK_LT(addr, array_buffer->byte_length());
 
   int waiters_woken = 0;
   void* backing_store = array_buffer->backing_store();
 
-  base::LockGuard<base::Mutex> lock_guard(mutex_.Pointer());
+  base::MutexGuard lock_guard(mutex_.Pointer());
   FutexWaitListNode* node = wait_list_.Pointer()->head_;
   while (node && num_waiters_to_wake > 0) {
     if (backing_store == node->backing_store_ && addr == node->wait_addr_) {
@@ -263,10 +285,10 @@ Object* FutexEmulation::Wake(Handle<JSArrayBuffer> array_buffer, size_t addr,
 
 Object* FutexEmulation::NumWaitersForTesting(Handle<JSArrayBuffer> array_buffer,
                                              size_t addr) {
-  DCHECK(addr < NumberToSize(array_buffer->byte_length()));
+  DCHECK_LT(addr, array_buffer->byte_length());
   void* backing_store = array_buffer->backing_store();
 
-  base::LockGuard<base::Mutex> lock_guard(mutex_.Pointer());
+  base::MutexGuard lock_guard(mutex_.Pointer());
 
   int waiters = 0;
   FutexWaitListNode* node = wait_list_.Pointer()->head_;

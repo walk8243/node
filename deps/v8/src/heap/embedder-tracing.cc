@@ -14,6 +14,7 @@ void LocalEmbedderHeapTracer::TracePrologue() {
 
   CHECK(cached_wrappers_to_trace_.empty());
   num_v8_marking_worklist_was_empty_ = 0;
+  embedder_worklist_empty_ = false;
   remote_tracer_->TracePrologue();
 }
 
@@ -22,13 +23,6 @@ void LocalEmbedderHeapTracer::TraceEpilogue() {
 
   CHECK(cached_wrappers_to_trace_.empty());
   remote_tracer_->TraceEpilogue();
-}
-
-void LocalEmbedderHeapTracer::AbortTracing() {
-  if (!InUse()) return;
-
-  cached_wrappers_to_trace_.clear();
-  remote_tracer_->AbortTracing();
 }
 
 void LocalEmbedderHeapTracer::EnterFinalPause() {

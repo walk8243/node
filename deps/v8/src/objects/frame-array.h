@@ -30,9 +30,9 @@ class Handle;
 // Container object for data collected during simple stack trace captures.
 class FrameArray : public FixedArray {
  public:
-#define DECL_FRAME_ARRAY_ACCESSORS(name, type) \
-  inline type* name(int frame_ix) const;       \
-  inline void Set##name(int frame_ix, type* value);
+#define DECL_FRAME_ARRAY_ACCESSORS(name, type)   \
+  inline type##ArgType name(int frame_ix) const; \
+  inline void Set##name(int frame_ix, type##ArgType value);
   FRAME_ARRAY_FIELD_LIST(DECL_FRAME_ARRAY_ACCESSORS)
 #undef DECL_FRAME_ARRAY_ACCESSORS
 
@@ -50,7 +50,9 @@ class FrameArray : public FixedArray {
     kIsAsmJsWasmFrame = 1 << 2,
     kIsStrict = 1 << 3,
     kIsConstructor = 1 << 4,
-    kAsmJsAtNumberConversion = 1 << 5
+    kAsmJsAtNumberConversion = 1 << 5,
+    kIsAsync = 1 << 6,
+    kIsPromiseAll = 1 << 7
   };
 
   static Handle<FrameArray> AppendJSFrame(Handle<FrameArray> in,

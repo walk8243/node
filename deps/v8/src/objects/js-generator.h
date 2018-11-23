@@ -5,7 +5,7 @@
 #ifndef V8_OBJECTS_JS_GENERATOR_H_
 #define V8_OBJECTS_JS_GENERATOR_H_
 
-#include "src/objects.h"
+#include "src/objects/js-objects.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
@@ -13,13 +13,16 @@
 namespace v8 {
 namespace internal {
 
+// Forward declarations.
+class JSPromise;
+
 class JSGeneratorObject : public JSObject {
  public:
   // [function]: The function corresponding to this generator object.
   DECL_ACCESSORS(function, JSFunction)
 
   // [context]: The context of the suspended computation.
-  DECL_ACCESSORS(context, Context)
+  DECL_ACCESSORS2(context, Context)
 
   // [receiver]: The receiver of the suspended computation.
   DECL_ACCESSORS(receiver, Object)
@@ -64,18 +67,46 @@ class JSGeneratorObject : public JSObject {
   static const int kGeneratorClosed = -1;
 
   // Layout description.
-  static const int kFunctionOffset = JSObject::kHeaderSize;
-  static const int kContextOffset = kFunctionOffset + kPointerSize;
-  static const int kReceiverOffset = kContextOffset + kPointerSize;
-  static const int kInputOrDebugPosOffset = kReceiverOffset + kPointerSize;
-  static const int kResumeModeOffset = kInputOrDebugPosOffset + kPointerSize;
-  static const int kContinuationOffset = kResumeModeOffset + kPointerSize;
-  static const int kParametersAndRegistersOffset =
-      kContinuationOffset + kPointerSize;
-  static const int kSize = kParametersAndRegistersOffset + kPointerSize;
+#define JS_GENERATOR_FIELDS(V)                  \
+  V(kFunctionOffset, kTaggedSize)               \
+  V(kContextOffset, kTaggedSize)                \
+  V(kReceiverOffset, kTaggedSize)               \
+  V(kInputOrDebugPosOffset, kTaggedSize)        \
+  V(kResumeModeOffset, kTaggedSize)             \
+  V(kContinuationOffset, kTaggedSize)           \
+  V(kParametersAndRegistersOffset, kTaggedSize) \
+  /* Header size. */                            \
+  V(kSize, 0)
+
+  DEFINE_FIELD_OFFSET_CONSTANTS(JSObject::kHeaderSize, JS_GENERATOR_FIELDS)
+#undef JS_GENERATOR_FIELDS
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(JSGeneratorObject);
+};
+
+class JSAsyncFunctionObject : public JSGeneratorObject {
+ public:
+  DECL_CAST(JSAsyncFunctionObject)
+
+  // Dispatched behavior.
+  DECL_VERIFIER(JSAsyncFunctionObject)
+
+  // [promise]: The promise of the async function.
+  DECL_ACCESSORS(promise, JSPromise)
+
+  // Layout description.
+#define JS_ASYNC_FUNCTION_FIELDS(V) \
+  V(kPromiseOffset, kTaggedSize)    \
+  /* Header size. */                \
+  V(kSize, 0)
+
+  DEFINE_FIELD_OFFSET_CONSTANTS(JSGeneratorObject::kSize,
+                                JS_ASYNC_FUNCTION_FIELDS)
+#undef JS_ASYNC_FUNCTION_FIELDS
+
+ private:
+  DISALLOW_IMPLICIT_CONSTRUCTORS(JSAsyncFunctionObject);
 };
 
 class JSAsyncGeneratorObject : public JSGeneratorObject {
@@ -95,9 +126,15 @@ class JSAsyncGeneratorObject : public JSGeneratorObject {
   DECL_INT_ACCESSORS(is_awaiting)
 
   // Layout description.
-  static const int kQueueOffset = JSGeneratorObject::kSize;
-  static const int kIsAwaitingOffset = kQueueOffset + kPointerSize;
-  static const int kSize = kIsAwaitingOffset + kPointerSize;
+#define JS_ASYNC_GENERATOR_FIELDS(V) \
+  V(kQueueOffset, kTaggedSize)       \
+  V(kIsAwaitingOffset, kTaggedSize)  \
+  /* Header size. */                 \
+  V(kSize, 0)
+
+  DEFINE_FIELD_OFFSET_CONSTANTS(JSGeneratorObject::kSize,
+                                JS_ASYNC_GENERATOR_FIELDS)
+#undef JS_ASYNC_GENERATOR_FIELDS
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(JSAsyncGeneratorObject);

@@ -5,6 +5,7 @@
 #if V8_TARGET_ARCH_MIPS
 
 #include "src/interface-descriptors.h"
+#include "src/macro-assembler.h"
 
 namespace v8 {
 namespace internal {
@@ -88,9 +89,9 @@ void CallVarargsDescriptor::InitializePlatformSpecific(
     CallInterfaceDescriptorData* data) {
   // a0 : number of arguments (on the stack, not including receiver)
   // a1 : the target to call
-  // a2 : arguments list (FixedArray)
   // t0 : arguments list length (untagged)
-  Register registers[] = {a1, a0, a2, t0};
+  // a2 : arguments list (FixedArray)
+  Register registers[] = {a1, a0, t0, a2};
   data->InitializePlatformSpecific(arraysize(registers), registers);
 }
 
@@ -125,9 +126,9 @@ void ConstructVarargsDescriptor::InitializePlatformSpecific(
   // a0 : number of arguments (on the stack, not including receiver)
   // a1 : the target to call
   // a3 : the new target
-  // a2 : arguments list (FixedArray)
   // t0 : arguments list length (untagged)
-  Register registers[] = {a1, a3, a0, a2, t0};
+  // a2 : arguments list (FixedArray)
+  Register registers[] = {a1, a3, a0, t0, a2};
   data->InitializePlatformSpecific(arraysize(registers), registers);
 }
 
@@ -194,7 +195,7 @@ void BinaryOpDescriptor::InitializePlatformSpecific(
   data->InitializePlatformSpecific(arraysize(registers), registers);
 }
 
-void ArgumentAdaptorDescriptor::InitializePlatformSpecific(
+void ArgumentsAdaptorDescriptor::InitializePlatformSpecific(
     CallInterfaceDescriptorData* data) {
   Register registers[] = {
       a1,  // JSFunction
@@ -238,10 +239,10 @@ void InterpreterPushArgsThenConstructDescriptor::InitializePlatformSpecific(
     CallInterfaceDescriptorData* data) {
   Register registers[] = {
       a0,  // argument count (not including receiver)
-      a3,  // new target
+      t4,  // address of the first argument
       a1,  // constructor to call
-      a2,  // allocation site feedback if available, undefined otherwise.
-      t4   // address of the first argument
+      a3,  // new target
+      a2,  // allocation site feedback if available, undefined otherwise
   };
   data->InitializePlatformSpecific(arraysize(registers), registers);
 }

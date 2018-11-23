@@ -19,7 +19,7 @@ class JSTypedArray;
 class ElementsAccessor {
  public:
   explicit ElementsAccessor(const char* name) : name_(name) { }
-  virtual ~ElementsAccessor() { }
+  virtual ~ElementsAccessor() = default;
 
   const char* name() const { return name_; }
 
@@ -135,10 +135,6 @@ class ElementsAccessor {
   virtual Handle<JSObject> Slice(Handle<JSObject> receiver, uint32_t start,
                                  uint32_t end) = 0;
 
-  virtual Handle<JSArray> Splice(Handle<JSArray> receiver,
-                                 uint32_t start, uint32_t delete_count,
-                                 Arguments* args, uint32_t add_count) = 0;
-
   virtual Handle<Object> Pop(Handle<JSArray> receiver) = 0;
 
   virtual Handle<Object> Shift(Handle<JSArray> receiver) = 0;
@@ -233,7 +229,7 @@ V8_WARN_UNUSED_RESULT MaybeHandle<Object> ArrayConstructInitializeElements(
     Handle<JSArray> array, Arguments* args);
 
 // Called directly from CSA.
-void CopyFastNumberJSArrayElementsToTypedArray(Context* context,
+void CopyFastNumberJSArrayElementsToTypedArray(Address raw_context,
                                                JSArray* source,
                                                JSTypedArray* destination,
                                                uintptr_t length,

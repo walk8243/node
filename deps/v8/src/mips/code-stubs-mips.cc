@@ -14,6 +14,7 @@
 #include "src/ic/ic.h"
 #include "src/ic/stub-cache.h"
 #include "src/isolate.h"
+#include "src/macro-assembler.h"
 #include "src/objects/api-callbacks.h"
 #include "src/regexp/jsregexp.h"
 #include "src/regexp/regexp-macro-assembler.h"
@@ -119,7 +120,7 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
   __ li(t0, ExternalReference::Create(
                 IsolateAddressId::kPendingExceptionAddress, isolate));
   __ sw(v0, MemOperand(t0));  // We come back from 'invoke'. result is in v0.
-  __ LoadRoot(v0, Heap::kExceptionRootIndex);
+  __ LoadRoot(v0, RootIndex::kException);
   __ b(&exit);  // b exposes branch delay slot.
   __ nop();   // Branch delay slot nop.
 
@@ -415,7 +416,7 @@ static void CallApiFunctionAndReturn(MacroAssembler* masm,
                     stack_space_offset != kInvalidStackOffset);
 
   // Check if the function scheduled an exception.
-  __ LoadRoot(t0, Heap::kTheHoleValueRootIndex);
+  __ LoadRoot(t0, RootIndex::kTheHoleValue);
   __ li(kScratchReg, ExternalReference::scheduled_exception_address(isolate));
   __ lw(t1, MemOperand(kScratchReg));
   __ Branch(&promote_scheduled_exception, ne, t0, Operand(t1));
@@ -466,13 +467,13 @@ void CallApiCallbackStub::Generate(MacroAssembler* masm) {
   STATIC_ASSERT(FCA::kHolderIndex == 0);
 
   // new target
-  __ PushRoot(Heap::kUndefinedValueRootIndex);
+  __ PushRoot(RootIndex::kUndefinedValue);
 
   // call data.
   __ Push(call_data);
 
   Register scratch = call_data;
-  __ LoadRoot(scratch, Heap::kUndefinedValueRootIndex);
+  __ LoadRoot(scratch, RootIndex::kUndefinedValue);
   // Push return value and default return value.
   __ Push(scratch, scratch);
   __ li(scratch, ExternalReference::isolate_address(masm->isolate()));
@@ -543,7 +544,7 @@ void CallApiGetterStub::Generate(MacroAssembler* masm) {
   __ sw(receiver, MemOperand(sp, (PCA::kThisIndex + 1) * kPointerSize));
   __ lw(scratch, FieldMemOperand(callback, AccessorInfo::kDataOffset));
   __ sw(scratch, MemOperand(sp, (PCA::kDataIndex + 1) * kPointerSize));
-  __ LoadRoot(scratch, Heap::kUndefinedValueRootIndex);
+  __ LoadRoot(scratch, RootIndex::kUndefinedValue);
   __ sw(scratch, MemOperand(sp, (PCA::kReturnValueOffset + 1) * kPointerSize));
   __ sw(scratch, MemOperand(sp, (PCA::kReturnValueDefaultValueIndex + 1) *
                                     kPointerSize));

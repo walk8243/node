@@ -33,7 +33,6 @@
 
 #include "src/base/utils/random-number-generator.h"
 #include "src/macro-assembler.h"
-#include "src/mips64/macro-assembler-mips64.h"
 #include "src/objects-inl.h"
 #include "src/simulator.h"
 
@@ -944,7 +943,7 @@ TEST(min_max_nan) {
 
   auto handle_dnan = [masm](FPURegister dst, Label* nan, Label* back) {
     __ bind(nan);
-    __ LoadRoot(t8, Heap::kNanValueRootIndex);
+    __ LoadRoot(t8, RootIndex::kNanValue);
     __ Ldc1(dst, FieldMemOperand(t8, HeapNumber::kValueOffset));
     __ Branch(back);
   };

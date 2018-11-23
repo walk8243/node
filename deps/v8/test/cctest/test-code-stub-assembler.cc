@@ -20,6 +20,7 @@
 #include "src/objects/js-array-buffer-inl.h"
 #include "src/objects/js-array-inl.h"
 #include "src/objects/promise-inl.h"
+#include "src/objects/smi.h"
 #include "test/cctest/compiler/code-assembler-tester.h"
 #include "test/cctest/compiler/function-tester.h"
 
@@ -345,7 +346,7 @@ TEST(ComputeIntegerHash) {
     Handle<Object> result = ft.Call(key).ToHandleChecked();
 
     uint32_t hash = ComputeSeededHash(k, isolate->heap()->HashSeed());
-    Smi* expected = Smi::FromInt(hash & Smi::kMaxValue);
+    Smi expected = Smi::FromInt(hash & Smi::kMaxValue);
     CHECK_EQ(expected, Smi::cast(*result));
   }
 }
@@ -907,9 +908,12 @@ TEST(TransitionLookup) {
     }
   }
 
-  CHECK(root_map->raw_transitions()->ToStrongHeapObject()->IsTransitionArray());
+  CHECK(root_map->raw_transitions()
+            ->GetHeapObjectAssumeStrong()
+            ->IsTransitionArray());
   Handle<TransitionArray> transitions(
-      TransitionArray::cast(root_map->raw_transitions()->ToStrongHeapObject()),
+      TransitionArray::cast(
+          root_map->raw_transitions()->GetHeapObjectAssumeStrong()),
       isolate);
   DCHECK(transitions->IsSortedNoDuplicates());
 
@@ -1962,8 +1966,8 @@ TNode<Smi> NonConstantSmi(CodeStubAssembler* m, int value) {
   m->BIND(&dummy_done);
 
   // Ensure that the above hackery actually created a non-constant SMI.
-  Smi* smi_constant;
-  CHECK(!m->ToSmiConstant(var.value(), smi_constant));
+  Smi smi_constant;
+  CHECK(!m->ToSmiConstant(var.value(), &smi_constant));
 
   return m->UncheckedCast<Smi>(var.value());
 }
@@ -2495,7 +2499,7 @@ TEST(CreatePromiseGetCapabilitiesExecutorContext) {
   Node* const context = m.Parameter(kNumParams + 2);
   Node* const native_context = m.LoadNativeContext(context);
 
-  Node* const map = m.LoadRoot(Heap::kPromiseCapabilityMapRootIndex);
+  Node* const map = m.LoadRoot(RootIndex::kPromiseCapabilityMap);
   Node* const capability = m.AllocateStruct(map);
   m.StoreObjectFieldNoWriteBarrier(
       capability, PromiseCapability::kPromiseOffset, m.UndefinedConstant());
@@ -2888,7 +2892,7 @@ TEST(GotoIfNotWhiteSpaceOrLineTerminator) {
 
   for (uc16 c = 0; c < 0xFFFF; c++) {
     Handle<Object> expected_value =
-        WhiteSpaceOrLineTerminator::Is(c) ? true_value : false_value;
+        IsWhiteSpaceOrLineTerminator(c) ? true_value : false_value;
     ft.CheckCall(expected_value, handle(Smi::FromInt(c), isolate));
   }
 }
@@ -3493,6 +3497,37 @@ TEST(TestCallBuiltinIndirectLoad) {
   MaybeHandle<Object> result = ft.Call(MakeString("abcdef"));
   CHECK(String::Equals(isolate, MakeString("abcdefabcdef"),
                        Handle<String>::cast(result.ToHandleChecked())));
+}
+
+TEST(TestGotoIfDebugExecutionModeChecksSideEffects) {
+  Isolate* isolate(CcTest::InitIsolateOnce());
+  CodeAssemblerTester asm_tester(isolate, 0);
+  {
+    CodeStubAssembler m(asm_tester.state());
+    Label is_true(&m), is_false(&m);
+    m.GotoIfDebugExecutionModeChecksSideEffects(&is_true);
+    m.Goto(&is_false);
+    m.BIND(&is_false);
+    m.Return(m.BooleanConstant(false));
+
+    m.BIND(&is_true);
+    m.Return(m.BooleanConstant(true));
+  }
+
+  FunctionTester ft(asm_tester.GenerateCode(), 0);
+
+  CHECK(isolate->debug_execution_mode() != DebugInfo::kSideEffects);
+
+  Handle<Object> result = ft.Call().ToHandleChecked();
+  CHECK(result->IsBoolean());
+  CHECK_EQ(false, result->BooleanValue(isolate));
+
+  isolate->debug()->StartSideEffectCheckMode();
+  CHECK(isolate->debug_execution_mode() == DebugInfo::kSideEffects);
+
+  result = ft.Call().ToHandleChecked();
+  CHECK(result->IsBoolean());
+  CHECK_EQ(true, result->BooleanValue(isolate));
 }
 
 }  // namespace compiler

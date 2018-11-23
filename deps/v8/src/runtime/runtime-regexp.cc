@@ -6,8 +6,9 @@
 
 #include "src/arguments-inl.h"
 #include "src/conversions-inl.h"
+#include "src/counters.h"
 #include "src/isolate-inl.h"
-#include "src/messages.h"
+#include "src/message-template.h"
 #include "src/objects/js-array-inl.h"
 #include "src/regexp/jsregexp-inl.h"
 #include "src/regexp/jsregexp.h"
@@ -38,7 +39,7 @@ uint32_t GetArgcForReplaceCallable(uint32_t num_captures,
 
 // Looks up the capture of the given name. Returns the (1-based) numbered
 // capture index or -1 on failure.
-int LookupNamedCapture(std::function<bool(String*)> name_matches,
+int LookupNamedCapture(const std::function<bool(String*)>& name_matches,
                        FixedArray* capture_name_map) {
   // TODO(jgruber): Sort capture_name_map and do binary search via
   // internalized strings.
@@ -782,7 +783,7 @@ V8_WARN_UNUSED_RESULT static Object* StringReplaceGlobalRegExpWithEmptyString(
   // needed.
   // TODO(hpayer): We should shrink the large object page if the size
   // of the object changed significantly.
-  if (!heap->lo_space()->Contains(*answer)) {
+  if (!heap->IsLargeObject(*answer)) {
     heap->CreateFillerObjectAt(end_of_string, delta, ClearRecordedSlots::kNo);
   }
   return *answer;
@@ -1097,7 +1098,7 @@ class VectorBackedMatch : public String::Match {
 // RegExpBuiltinsAssembler::ConstructNewResultFromMatchInfo).
 Handle<JSObject> ConstructNamedCaptureGroupsObject(
     Isolate* isolate, Handle<FixedArray> capture_map,
-    std::function<Object*(int)> f_get_capture) {
+    const std::function<Object*(int)>& f_get_capture) {
   Handle<JSObject> groups = isolate->factory()->NewJSObjectWithNullProto();
 
   const int capture_count = capture_map->length() >> 1;
@@ -1572,8 +1573,6 @@ RUNTIME_FUNCTION(Runtime_RegExpSplit) {
   HandleScope scope(isolate);
   DCHECK_EQ(3, args.length());
 
-  DCHECK(args[1]->IsString());
-
   CONVERT_ARG_HANDLE_CHECKED(JSReceiver, recv, 0);
   CONVERT_ARG_HANDLE_CHECKED(String, string, 1);
   CONVERT_ARG_HANDLE_CHECKED(Object, limit_obj, 2);
@@ -1736,15 +1735,19 @@ RUNTIME_FUNCTION(Runtime_RegExpReplace) {
 
   string = String::Flatten(isolate, string);
 
-  // Fast-path for unmodified JSRegExps.
+  const bool functional_replace = replace_obj->IsCallable();
+
+  // Fast-path for unmodified JSRegExps (and non-functional replace).
   if (RegExpUtils::IsUnmodifiedRegExp(isolate, recv)) {
+    // We should never get here with functional replace because unmodified
+    // regexp and functional replace should be fully handled in CSA code.
+    CHECK(!functional_replace);
     RETURN_RESULT_OR_FAILURE(
         isolate, RegExpReplace(isolate, Handle<JSRegExp>::cast(recv), string,
                                replace_obj));
   }
 
   const uint32_t length = string->length();
-  const bool functional_replace = replace_obj->IsCallable();
 
   Handle<String> replace;
   if (!functional_replace) {

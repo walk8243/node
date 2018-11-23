@@ -22,12 +22,14 @@ namespace v8 {
 namespace internal {
 
 CAST_ACCESSOR(WasmDebugInfo)
+CAST_ACCESSOR(WasmExceptionObject)
 CAST_ACCESSOR(WasmExportedFunctionData)
 CAST_ACCESSOR(WasmGlobalObject)
 CAST_ACCESSOR(WasmInstanceObject)
 CAST_ACCESSOR(WasmMemoryObject)
 CAST_ACCESSOR(WasmModuleObject)
 CAST_ACCESSOR(WasmTableObject)
+CAST_ACCESSOR(AsmWasmData)
 
 #define OPTIONAL_ACCESSORS(holder, name, type, offset) \
   bool holder::has_##name() {                          \
@@ -101,10 +103,7 @@ int WasmGlobalObject::type_size() const {
 }
 
 Address WasmGlobalObject::address() const {
-  uint32_t buffer_size = 0;
-  DCHECK(array_buffer()->byte_length()->ToUint32(&buffer_size));
-  DCHECK_LE(offset() + type_size(), buffer_size);
-  USE(buffer_size);
+  DCHECK_LE(offset() + type_size(), array_buffer()->byte_length());
   return Address(array_buffer()->backing_store()) + offset();
 }
 
@@ -144,8 +143,8 @@ void WasmGlobalObject::SetF64(double value) {
 PRIMITIVE_ACCESSORS(WasmInstanceObject, memory_start, byte*, kMemoryStartOffset)
 PRIMITIVE_ACCESSORS(WasmInstanceObject, memory_size, size_t, kMemorySizeOffset)
 PRIMITIVE_ACCESSORS(WasmInstanceObject, memory_mask, size_t, kMemoryMaskOffset)
-PRIMITIVE_ACCESSORS(WasmInstanceObject, roots_array_address, Address,
-                    kRootsArrayAddressOffset)
+PRIMITIVE_ACCESSORS(WasmInstanceObject, isolate_root, Address,
+                    kIsolateRootOffset)
 PRIMITIVE_ACCESSORS(WasmInstanceObject, stack_limit_address, Address,
                     kStackLimitAddressOffset)
 PRIMITIVE_ACCESSORS(WasmInstanceObject, real_stack_limit_address, Address,
@@ -168,7 +167,7 @@ PRIMITIVE_ACCESSORS(WasmInstanceObject, jump_table_start, Address,
 ACCESSORS(WasmInstanceObject, module_object, WasmModuleObject,
           kModuleObjectOffset)
 ACCESSORS(WasmInstanceObject, exports_object, JSObject, kExportsObjectOffset)
-ACCESSORS(WasmInstanceObject, native_context, Context, kNativeContextOffset)
+ACCESSORS2(WasmInstanceObject, native_context, Context, kNativeContextOffset)
 OPTIONAL_ACCESSORS(WasmInstanceObject, memory_object, WasmMemoryObject,
                    kMemoryObjectOffset)
 OPTIONAL_ACCESSORS(WasmInstanceObject, globals_buffer, JSArrayBuffer,
@@ -179,17 +178,17 @@ OPTIONAL_ACCESSORS(WasmInstanceObject, debug_info, WasmDebugInfo,
                    kDebugInfoOffset)
 OPTIONAL_ACCESSORS(WasmInstanceObject, table_object, WasmTableObject,
                    kTableObjectOffset)
-ACCESSORS(WasmInstanceObject, imported_function_instances, FixedArray,
-          kImportedFunctionInstancesOffset)
-ACCESSORS(WasmInstanceObject, imported_function_callables, FixedArray,
-          kImportedFunctionCallablesOffset)
-OPTIONAL_ACCESSORS(WasmInstanceObject, indirect_function_table_instances,
-                   FixedArray, kIndirectFunctionTableInstancesOffset)
+ACCESSORS(WasmInstanceObject, imported_function_refs, FixedArray,
+          kImportedFunctionRefsOffset)
+OPTIONAL_ACCESSORS(WasmInstanceObject, indirect_function_table_refs, FixedArray,
+                   kIndirectFunctionTableRefsOffset)
 OPTIONAL_ACCESSORS(WasmInstanceObject, managed_native_allocations, Foreign,
                    kManagedNativeAllocationsOffset)
+OPTIONAL_ACCESSORS(WasmInstanceObject, exceptions_table, FixedArray,
+                   kExceptionsTableOffset)
 ACCESSORS(WasmInstanceObject, undefined_value, Oddball, kUndefinedValueOffset)
 ACCESSORS(WasmInstanceObject, null_value, Oddball, kNullValueOffset)
-ACCESSORS(WasmInstanceObject, centry_stub, Code, kCEntryStubOffset)
+ACCESSORS2(WasmInstanceObject, centry_stub, Code, kCEntryStubOffset)
 
 inline bool WasmInstanceObject::has_indirect_function_table() {
   return indirect_function_table_sig_ids() != nullptr;
@@ -209,8 +208,13 @@ ImportedFunctionEntry::ImportedFunctionEntry(
   DCHECK_LT(index, instance->module()->num_imported_functions);
 }
 
+// WasmExceptionObject
+ACCESSORS(WasmExceptionObject, serialized_signature, PodArray<wasm::ValueType>,
+          kSerializedSignatureOffset)
+ACCESSORS(WasmExceptionObject, exception_tag, HeapObject, kExceptionTagOffset)
+
 // WasmExportedFunctionData
-ACCESSORS(WasmExportedFunctionData, wrapper_code, Code, kWrapperCodeOffset)
+ACCESSORS2(WasmExportedFunctionData, wrapper_code, Code, kWrapperCodeOffset)
 ACCESSORS(WasmExportedFunctionData, instance, WasmInstanceObject,
           kInstanceOffset)
 SMI_ACCESSORS(WasmExportedFunctionData, jump_table_offset,
@@ -220,7 +224,7 @@ SMI_ACCESSORS(WasmExportedFunctionData, function_index, kFunctionIndexOffset)
 // WasmDebugInfo
 ACCESSORS(WasmDebugInfo, wasm_instance, WasmInstanceObject, kInstanceOffset)
 ACCESSORS(WasmDebugInfo, interpreter_handle, Object, kInterpreterHandleOffset)
-ACCESSORS(WasmDebugInfo, interpreted_functions, Object,
+ACCESSORS(WasmDebugInfo, interpreted_functions, FixedArray,
           kInterpretedFunctionsOffset)
 OPTIONAL_ACCESSORS(WasmDebugInfo, locals_names, FixedArray, kLocalsNamesOffset)
 OPTIONAL_ACCESSORS(WasmDebugInfo, c_wasm_entries, FixedArray,
@@ -236,6 +240,13 @@ OPTIONAL_ACCESSORS(WasmDebugInfo, c_wasm_entry_map, Managed<wasm::SignatureMap>,
 uint32_t WasmTableObject::current_length() { return functions()->length(); }
 
 bool WasmMemoryObject::has_maximum_pages() { return maximum_pages() >= 0; }
+
+// AsmWasmData
+ACCESSORS(AsmWasmData, managed_native_module, Managed<wasm::NativeModule>,
+          kManagedNativeModuleOffset)
+ACCESSORS(AsmWasmData, export_wrappers, FixedArray, kExportWrappersOffset)
+ACCESSORS(AsmWasmData, asm_js_offset_table, ByteArray, kAsmJsOffsetTableOffset)
+ACCESSORS(AsmWasmData, uses_bitset, HeapNumber, kUsesBitsetOffset)
 
 #include "src/objects/object-macros-undef.h"
 

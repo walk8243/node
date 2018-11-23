@@ -15,6 +15,7 @@
 #include "src/ic/ic.h"
 #include "src/ic/stub-cache.h"
 #include "src/isolate.h"
+#include "src/macro-assembler.h"
 #include "src/objects/api-callbacks.h"
 #include "src/regexp/jsregexp.h"
 #include "src/regexp/regexp-macro-assembler.h"
@@ -115,7 +116,7 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
                  IsolateAddressId::kPendingExceptionAddress, isolate())));
 
   __ StoreP(r3, MemOperand(ip));
-  __ LoadRoot(r3, Heap::kExceptionRootIndex);
+  __ LoadRoot(r3, RootIndex::kException);
   __ b(&exit);
 
   // Invoke: Link this frame into the handler chain.
@@ -439,7 +440,7 @@ static void CallApiFunctionAndReturn(MacroAssembler* masm,
   __ LeaveExitFrame(false, r14, stack_space_operand != nullptr);
 
   // Check if the function scheduled an exception.
-  __ LoadRoot(r14, Heap::kTheHoleValueRootIndex);
+  __ LoadRoot(r14, RootIndex::kTheHoleValue);
   __ Move(r15, ExternalReference::scheduled_exception_address(isolate));
   __ LoadP(r15, MemOperand(r15));
   __ cmp(r14, r15);
@@ -490,13 +491,13 @@ void CallApiCallbackStub::Generate(MacroAssembler* masm) {
   STATIC_ASSERT(FCA::kHolderIndex == 0);
 
   // new target
-  __ PushRoot(Heap::kUndefinedValueRootIndex);
+  __ PushRoot(RootIndex::kUndefinedValue);
 
   // call data
   __ push(call_data);
 
   Register scratch = call_data;
-  __ LoadRoot(scratch, Heap::kUndefinedValueRootIndex);
+  __ LoadRoot(scratch, RootIndex::kUndefinedValue);
   // return value
   __ push(scratch);
   // return value default
@@ -577,11 +578,11 @@ void CallApiGetterStub::Generate(MacroAssembler* masm) {
   // Push data from AccessorInfo.
   __ LoadP(scratch, FieldMemOperand(callback, AccessorInfo::kDataOffset));
   __ push(scratch);
-  __ LoadRoot(scratch, Heap::kUndefinedValueRootIndex);
+  __ LoadRoot(scratch, RootIndex::kUndefinedValue);
   __ Push(scratch, scratch);
   __ Move(scratch, ExternalReference::isolate_address(isolate()));
   __ Push(scratch, holder);
-  __ Push(Smi::kZero);  // should_throw_on_error -> false
+  __ Push(Smi::zero());  // should_throw_on_error -> false
   __ LoadP(scratch, FieldMemOperand(callback, AccessorInfo::kNameOffset));
   __ push(scratch);
 

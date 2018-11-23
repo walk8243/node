@@ -45,9 +45,9 @@ class Name : public HeapObject {
   // If the name is private, it can only name own properties.
   inline bool IsPrivate();
 
-  // If the name is a private field, it should behave like a private
+  // If the name is a private name, it should behave like a private
   // symbol but also throw on property access miss.
-  inline bool IsPrivateField();
+  inline bool IsPrivateName();
 
   inline bool IsUniqueName() const;
 
@@ -67,13 +67,8 @@ class Name : public HeapObject {
   int NameShortPrint(Vector<char> str);
 
   // Layout description.
-  static const int kHashFieldSlot = HeapObject::kHeaderSize;
-#if V8_TARGET_LITTLE_ENDIAN || !V8_HOST_ARCH_64_BIT
-  static const int kHashFieldOffset = kHashFieldSlot;
-#else
-  static const int kHashFieldOffset = kHashFieldSlot + kInt32Size;
-#endif
-  static const int kSize = kHashFieldSlot + kPointerSize;
+  static const int kHashFieldOffset = HeapObject::kHeaderSize;
+  static const int kHeaderSize = kHashFieldOffset + kInt32Size;
 
   // Mask constant for checking if a name has a computed hash code
   // and if it is a string that is an array index.  The least significant bit
@@ -166,13 +161,13 @@ class Symbol : public Name {
   // Symbol.keyFor on such a symbol simply needs to return the attached name.
   DECL_BOOLEAN_ACCESSORS(is_public)
 
-  // [is_private_field]: Whether this is a private field.  Private fields
+  // [is_private_name]: Whether this is a private name.  Private names
   // are the same as private symbols except they throw on missing
   // property access.
   //
   // This also sets the is_private bit.
-  inline bool is_private_field() const;
-  inline void set_is_private_field();
+  inline bool is_private_name() const;
+  inline void set_is_private_name();
 
   DECL_CAST(Symbol)
 
@@ -181,20 +176,27 @@ class Symbol : public Name {
   DECL_VERIFIER(Symbol)
 
   // Layout description.
-  static const int kNameOffset = Name::kSize;
-  static const int kFlagsOffset = kNameOffset + kPointerSize;
-  static const int kSize = kFlagsOffset + kPointerSize;
+#define SYMBOL_FIELDS(V)      \
+  V(kFlagsOffset, kInt32Size) \
+  V(kNameOffset, kTaggedSize) \
+  /* Header size. */          \
+  V(kSize, 0)
 
-  // Flags layout.
-  static const int kPrivateBit = 0;
-  static const int kWellKnownSymbolBit = 1;
-  static const int kPublicBit = 2;
-  static const int kInterestingSymbolBit = 3;
-  static const int kPrivateFieldBit = 4;
+  DEFINE_FIELD_OFFSET_CONSTANTS(Name::kHeaderSize, SYMBOL_FIELDS)
+#undef SYMBOL_FIELDS
 
-  typedef FixedBodyDescriptor<kNameOffset, kFlagsOffset, kSize> BodyDescriptor;
-  // No weak fields.
-  typedef BodyDescriptor BodyDescriptorWeak;
+// Flags layout.
+#define FLAGS_BIT_FIELDS(V, _)          \
+  V(IsPrivateBit, bool, 1, _)           \
+  V(IsWellKnownSymbolBit, bool, 1, _)   \
+  V(IsPublicBit, bool, 1, _)            \
+  V(IsInterestingSymbolBit, bool, 1, _) \
+  V(IsPrivateNameBit, bool, 1, _)
+
+  DEFINE_BIT_FIELDS(FLAGS_BIT_FIELDS)
+#undef FLAGS_BIT_FIELDS
+
+  typedef FixedBodyDescriptor<kNameOffset, kSize, kSize> BodyDescriptor;
 
   void SymbolShortPrint(std::ostream& os);
 

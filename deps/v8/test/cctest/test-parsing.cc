@@ -49,7 +49,6 @@
 #include "src/parsing/rewriter.h"
 #include "src/parsing/scanner-character-streams.h"
 #include "src/parsing/token.h"
-#include "src/unicode-cache.h"
 #include "src/utils.h"
 
 #include "test/cctest/cctest.h"
@@ -71,6 +70,388 @@ void MockUseCounterCallback(v8::Isolate* isolate,
 
 }  // namespace
 
+bool TokenIsAutoSemicolon(Token::Value token) {
+  switch (token) {
+    case Token::SEMICOLON:
+    case Token::EOS:
+    case Token::RBRACE:
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(AutoSemicolonToken) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value token = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsAutoSemicolon(token), Token::IsAutoSemicolon(token));
+  }
+}
+
+bool TokenIsAnyIdentifier(Token::Value token) {
+  switch (token) {
+    case Token::IDENTIFIER:
+    case Token::ASYNC:
+    case Token::AWAIT:
+    case Token::YIELD:
+    case Token::LET:
+    case Token::STATIC:
+    case Token::FUTURE_STRICT_RESERVED_WORD:
+    case Token::ESCAPED_STRICT_RESERVED_WORD:
+    case Token::ENUM:
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(AnyIdentifierToken) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value token = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsAnyIdentifier(token), Token::IsAnyIdentifier(token));
+  }
+}
+
+bool TokenIsCallable(Token::Value token) {
+  switch (token) {
+    case Token::SUPER:
+    case Token::IDENTIFIER:
+    case Token::ASYNC:
+    case Token::AWAIT:
+    case Token::YIELD:
+    case Token::LET:
+    case Token::STATIC:
+    case Token::FUTURE_STRICT_RESERVED_WORD:
+    case Token::ESCAPED_STRICT_RESERVED_WORD:
+    case Token::ENUM:
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(CallableToken) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value token = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsCallable(token), Token::IsCallable(token));
+  }
+}
+
+bool TokenIsIdentifier(Token::Value token, LanguageMode language_mode,
+                       bool is_generator, bool disallow_await) {
+  switch (token) {
+    case Token::IDENTIFIER:
+    case Token::ASYNC:
+      return true;
+    case Token::YIELD:
+      return !is_generator && is_sloppy(language_mode);
+    case Token::AWAIT:
+      return !disallow_await;
+    case Token::LET:
+    case Token::STATIC:
+    case Token::FUTURE_STRICT_RESERVED_WORD:
+    case Token::ESCAPED_STRICT_RESERVED_WORD:
+      return is_sloppy(language_mode);
+    default:
+      return false;
+  }
+  UNREACHABLE();
+}
+
+TEST(IsIdentifierToken) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value token = static_cast<Token::Value>(i);
+    for (size_t raw_language_mode = 0; raw_language_mode < LanguageModeSize;
+         raw_language_mode++) {
+      LanguageMode mode = static_cast<LanguageMode>(raw_language_mode);
+      for (int is_generator = 0; is_generator < 2; is_generator++) {
+        for (int disallow_await = 0; disallow_await < 2; disallow_await++) {
+          CHECK_EQ(
+              TokenIsIdentifier(token, mode, is_generator, disallow_await),
+              Token::IsIdentifier(token, mode, is_generator, disallow_await));
+        }
+      }
+    }
+  }
+}
+
+bool TokenIsStrictReservedWord(Token::Value token) {
+  switch (token) {
+    case Token::LET:
+    case Token::STATIC:
+    case Token::FUTURE_STRICT_RESERVED_WORD:
+    case Token::ESCAPED_STRICT_RESERVED_WORD:
+      return true;
+    default:
+      return false;
+  }
+  UNREACHABLE();
+}
+
+TEST(IsStrictReservedWord) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value token = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsStrictReservedWord(token),
+             Token::IsStrictReservedWord(token));
+  }
+}
+
+bool TokenIsLiteral(Token::Value token) {
+  switch (token) {
+    case Token::NULL_LITERAL:
+    case Token::TRUE_LITERAL:
+    case Token::FALSE_LITERAL:
+    case Token::NUMBER:
+    case Token::SMI:
+    case Token::BIGINT:
+    case Token::STRING:
+      return true;
+    default:
+      return false;
+  }
+  UNREACHABLE();
+}
+
+TEST(IsLiteralToken) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value token = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsLiteral(token), Token::IsLiteral(token));
+  }
+}
+
+bool TokenIsAssignmentOp(Token::Value token) {
+  switch (token) {
+    case Token::INIT:
+    case Token::ASSIGN:
+#define T(name, string, precedence) case Token::name:
+      BINARY_OP_TOKEN_LIST(T, EXPAND_BINOP_ASSIGN_TOKEN)
+#undef T
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(AssignmentOp) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value token = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsAssignmentOp(token), Token::IsAssignmentOp(token));
+  }
+}
+
+bool TokenIsArrowOrAssignmentOp(Token::Value token) {
+  return token == Token::ARROW || TokenIsAssignmentOp(token);
+}
+
+TEST(ArrowOrAssignmentOp) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value token = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsArrowOrAssignmentOp(token),
+             Token::IsArrowOrAssignmentOp(token));
+  }
+}
+
+bool TokenIsBinaryOp(Token::Value token) {
+  switch (token) {
+    case Token::COMMA:
+    case Token::OR:
+    case Token::AND:
+#define T(name, string, precedence) case Token::name:
+      BINARY_OP_TOKEN_LIST(T, EXPAND_BINOP_TOKEN)
+#undef T
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(BinaryOp) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value token = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsBinaryOp(token), Token::IsBinaryOp(token));
+  }
+}
+
+bool TokenIsCompareOp(Token::Value token) {
+  switch (token) {
+    case Token::EQ:
+    case Token::EQ_STRICT:
+    case Token::NE:
+    case Token::NE_STRICT:
+    case Token::LT:
+    case Token::GT:
+    case Token::LTE:
+    case Token::GTE:
+    case Token::INSTANCEOF:
+    case Token::IN:
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(CompareOp) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value token = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsCompareOp(token), Token::IsCompareOp(token));
+  }
+}
+
+bool TokenIsOrderedRelationalCompareOp(Token::Value token) {
+  switch (token) {
+    case Token::LT:
+    case Token::GT:
+    case Token::LTE:
+    case Token::GTE:
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(IsOrderedRelationalCompareOp) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value token = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsOrderedRelationalCompareOp(token),
+             Token::IsOrderedRelationalCompareOp(token));
+  }
+}
+
+bool TokenIsEqualityOp(Token::Value token) {
+  switch (token) {
+    case Token::EQ:
+    case Token::EQ_STRICT:
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(IsEqualityOp) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value token = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsEqualityOp(token), Token::IsEqualityOp(token));
+  }
+}
+
+bool TokenIsBitOp(Token::Value token) {
+  switch (token) {
+    case Token::BIT_OR:
+    case Token::BIT_XOR:
+    case Token::BIT_AND:
+    case Token::SHL:
+    case Token::SAR:
+    case Token::SHR:
+    case Token::BIT_NOT:
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(IsBitOp) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value token = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsBitOp(token), Token::IsBitOp(token));
+  }
+}
+
+bool TokenIsUnaryOp(Token::Value token) {
+  switch (token) {
+    case Token::NOT:
+    case Token::BIT_NOT:
+    case Token::DELETE:
+    case Token::TYPEOF:
+    case Token::VOID:
+    case Token::ADD:
+    case Token::SUB:
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(IsUnaryOp) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value token = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsUnaryOp(token), Token::IsUnaryOp(token));
+  }
+}
+
+bool TokenIsPropertyOrCall(Token::Value token) {
+  switch (token) {
+    case Token::TEMPLATE_SPAN:
+    case Token::TEMPLATE_TAIL:
+    case Token::PERIOD:
+    case Token::LBRACK:
+    case Token::LPAREN:
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(IsPropertyOrCall) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value token = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsPropertyOrCall(token), Token::IsPropertyOrCall(token));
+  }
+}
+
+bool TokenIsProperty(Token::Value token) {
+  switch (token) {
+    case Token::TEMPLATE_SPAN:
+    case Token::TEMPLATE_TAIL:
+    case Token::PERIOD:
+    case Token::LBRACK:
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(IsProperty) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value token = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsProperty(token), Token::IsProperty(token));
+  }
+}
+
+bool TokenIsCountOp(Token::Value token) {
+  switch (token) {
+    case Token::INC:
+    case Token::DEC:
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(IsCountOp) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value token = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsCountOp(token), Token::IsCountOp(token));
+  }
+}
+
+bool TokenIsShiftOp(Token::Value token) {
+  switch (token) {
+    case Token::SHL:
+    case Token::SAR:
+    case Token::SHR:
+      return true;
+    default:
+      return false;
+  }
+}
+
+TEST(IsShiftOp) {
+  for (int i = 0; i < Token::NUM_TOKENS; i++) {
+    Token::Value token = static_cast<Token::Value>(i);
+    CHECK_EQ(TokenIsShiftOp(token), Token::IsShiftOp(token));
+  }
+}
+
 TEST(ScanKeywords) {
   struct KeywordToken {
     const char* keyword;
@@ -84,7 +465,6 @@ TEST(ScanKeywords) {
           {nullptr, i::Token::IDENTIFIER}};
 
   KeywordToken key_token;
-  i::UnicodeCache unicode_cache;
   char buffer[32];
   for (int i = 0; (key_token = keywords[i]).keyword != nullptr; i++) {
     const char* keyword = key_token.keyword;
@@ -92,7 +472,7 @@ TEST(ScanKeywords) {
     CHECK(static_cast<int>(sizeof(buffer)) >= length);
     {
       auto stream = i::ScannerStream::ForTesting(keyword, length);
-      i::Scanner scanner(&unicode_cache, stream.get(), false);
+      i::Scanner scanner(stream.get(), false);
       scanner.Initialize();
       CHECK_EQ(key_token.token, scanner.Next());
       CHECK_EQ(i::Token::EOS, scanner.Next());
@@ -100,7 +480,7 @@ TEST(ScanKeywords) {
     // Removing characters will make keyword matching fail.
     {
       auto stream = i::ScannerStream::ForTesting(keyword, length - 1);
-      i::Scanner scanner(&unicode_cache, stream.get(), false);
+      i::Scanner scanner(stream.get(), false);
       scanner.Initialize();
       CHECK_EQ(i::Token::IDENTIFIER, scanner.Next());
       CHECK_EQ(i::Token::EOS, scanner.Next());
@@ -111,7 +491,7 @@ TEST(ScanKeywords) {
       i::MemMove(buffer, keyword, length);
       buffer[length] = chars_to_append[j];
       auto stream = i::ScannerStream::ForTesting(buffer, length + 1);
-      i::Scanner scanner(&unicode_cache, stream.get(), false);
+      i::Scanner scanner(stream.get(), false);
       scanner.Initialize();
       CHECK_EQ(i::Token::IDENTIFIER, scanner.Next());
       CHECK_EQ(i::Token::EOS, scanner.Next());
@@ -121,7 +501,7 @@ TEST(ScanKeywords) {
       i::MemMove(buffer, keyword, length);
       buffer[length - 1] = '_';
       auto stream = i::ScannerStream::ForTesting(buffer, length);
-      i::Scanner scanner(&unicode_cache, stream.get(), false);
+      i::Scanner scanner(stream.get(), false);
       scanner.Initialize();
       CHECK_EQ(i::Token::IDENTIFIER, scanner.Next());
       CHECK_EQ(i::Token::EOS, scanner.Next());
@@ -188,7 +568,7 @@ TEST(ScanHTMLEndComments) {
   for (int i = 0; tests[i]; i++) {
     const char* source = tests[i];
     auto stream = i::ScannerStream::ForTesting(source);
-    i::Scanner scanner(i_isolate->unicode_cache(), stream.get(), false);
+    i::Scanner scanner(stream.get(), false);
     scanner.Initialize();
     i::Zone zone(i_isolate->allocator(), ZONE_NAME);
     i::AstValueFactory ast_value_factory(&zone,
@@ -207,7 +587,7 @@ TEST(ScanHTMLEndComments) {
   for (int i = 0; fail_tests[i]; i++) {
     const char* source = fail_tests[i];
     auto stream = i::ScannerStream::ForTesting(source);
-    i::Scanner scanner(i_isolate->unicode_cache(), stream.get(), false);
+    i::Scanner scanner(stream.get(), false);
     scanner.Initialize();
     i::Zone zone(i_isolate->allocator(), ZONE_NAME);
     i::AstValueFactory ast_value_factory(&zone,
@@ -221,18 +601,17 @@ TEST(ScanHTMLEndComments) {
     i::PreParser::PreParseResult result = preparser.PreParseProgram();
     // Even in the case of a syntax error, kPreParseSuccess is returned.
     CHECK_EQ(i::PreParser::kPreParseSuccess, result);
-    CHECK(pending_error_handler.has_pending_error());
+    CHECK(pending_error_handler.has_pending_error() ||
+          pending_error_handler.has_error_unidentifiable_by_preparser());
   }
 }
 
 TEST(ScanHtmlComments) {
   const char* src = "a <!-- b --> c";
-  i::UnicodeCache unicode_cache;
-
   // Disallow HTML comments.
   {
     auto stream = i::ScannerStream::ForTesting(src);
-    i::Scanner scanner(&unicode_cache, stream.get(), true);
+    i::Scanner scanner(stream.get(), true);
     scanner.Initialize();
     CHECK_EQ(i::Token::IDENTIFIER, scanner.Next());
     CHECK_EQ(i::Token::ILLEGAL, scanner.Next());
@@ -241,7 +620,7 @@ TEST(ScanHtmlComments) {
   // Skip HTML comments:
   {
     auto stream = i::ScannerStream::ForTesting(src);
-    i::Scanner scanner(&unicode_cache, stream.get(), false);
+    i::Scanner scanner(stream.get(), false);
     scanner.Initialize();
     CHECK_EQ(i::Token::IDENTIFIER, scanner.Next());
     CHECK_EQ(i::Token::EOS, scanner.Next());
@@ -253,8 +632,8 @@ class ScriptResource : public v8::String::ExternalOneByteStringResource {
   ScriptResource(const char* data, size_t length)
       : data_(data), length_(length) { }
 
-  const char* data() const { return data_; }
-  size_t length() const { return length_; }
+  const char* data() const override { return data_; }
+  size_t length() const override { return length_; }
 
  private:
   const char* data_;
@@ -280,7 +659,7 @@ TEST(StandAlonePreParser) {
   uintptr_t stack_limit = i_isolate->stack_guard()->real_climit();
   for (int i = 0; programs[i]; i++) {
     auto stream = i::ScannerStream::ForTesting(programs[i]);
-    i::Scanner scanner(i_isolate->unicode_cache(), stream.get(), false);
+    i::Scanner scanner(stream.get(), false);
     scanner.Initialize();
 
     i::Zone zone(i_isolate->allocator(), ZONE_NAME);
@@ -313,7 +692,7 @@ TEST(StandAlonePreParserNoNatives) {
   uintptr_t stack_limit = isolate->stack_guard()->real_climit();
   for (int i = 0; programs[i]; i++) {
     auto stream = i::ScannerStream::ForTesting(programs[i]);
-    i::Scanner scanner(isolate->unicode_cache(), stream.get(), false);
+    i::Scanner scanner(stream.get(), false);
     scanner.Initialize();
 
     // Preparser defaults to disallowing natives syntax.
@@ -328,7 +707,8 @@ TEST(StandAlonePreParserNoNatives) {
                            isolate->logger());
     i::PreParser::PreParseResult result = preparser.PreParseProgram();
     CHECK_EQ(i::PreParser::kPreParseSuccess, result);
-    CHECK(pending_error_handler.has_pending_error());
+    CHECK(pending_error_handler.has_pending_error() ||
+          pending_error_handler.has_error_unidentifiable_by_preparser());
   }
 }
 
@@ -348,7 +728,7 @@ TEST(RegressChromium62639) {
   // failed in debug mode, and sometimes crashed in release mode.
 
   auto stream = i::ScannerStream::ForTesting(program);
-  i::Scanner scanner(CcTest::i_isolate()->unicode_cache(), stream.get(), false);
+  i::Scanner scanner(stream.get(), false);
   scanner.Initialize();
   i::Zone zone(CcTest::i_isolate()->allocator(), ZONE_NAME);
   i::AstValueFactory ast_value_factory(
@@ -362,7 +742,8 @@ TEST(RegressChromium62639) {
   i::PreParser::PreParseResult result = preparser.PreParseProgram();
   // Even in the case of a syntax error, kPreParseSuccess is returned.
   CHECK_EQ(i::PreParser::kPreParseSuccess, result);
-  CHECK(pending_error_handler.has_pending_error());
+  CHECK(pending_error_handler.has_pending_error() ||
+        pending_error_handler.has_error_unidentifiable_by_preparser());
 }
 
 
@@ -381,7 +762,7 @@ TEST(PreParseOverflow) {
   uintptr_t stack_limit = isolate->stack_guard()->real_climit();
 
   auto stream = i::ScannerStream::ForTesting(program.get(), kProgramSize);
-  i::Scanner scanner(isolate->unicode_cache(), stream.get(), false);
+  i::Scanner scanner(stream.get(), false);
   scanner.Initialize();
 
   i::Zone zone(CcTest::i_isolate()->allocator(), ZONE_NAME);
@@ -400,7 +781,7 @@ void TestStreamScanner(i::Utf16CharacterStream* stream,
                        i::Token::Value* expected_tokens,
                        int skip_pos = 0,  // Zero means not skipping.
                        int skip_to = 0) {
-  i::Scanner scanner(CcTest::i_isolate()->unicode_cache(), stream, false);
+  i::Scanner scanner(stream, false);
   scanner.Initialize();
 
   int i = 0;
@@ -478,7 +859,7 @@ TEST(StreamScanner) {
 void TestScanRegExp(const char* re_source, const char* expected) {
   auto stream = i::ScannerStream::ForTesting(re_source);
   i::HandleScope scope(CcTest::i_isolate());
-  i::Scanner scanner(CcTest::i_isolate()->unicode_cache(), stream.get(), false);
+  i::Scanner scanner(stream.get(), false);
   scanner.Initialize();
 
   i::Token::Value start = scanner.peek();
@@ -678,8 +1059,8 @@ TEST(ScopeUsesArgumentsSuperThis) {
       if ((source_data[i].expected & THIS) != 0) {
         // Currently the is_used() flag is conservative; all variables in a
         // script scope are marked as used.
-        CHECK(
-            scope->Lookup(info.ast_value_factory()->this_string())->is_used());
+        CHECK(scope->LookupForTesting(info.ast_value_factory()->this_string())
+                  ->is_used());
       }
       if (is_sloppy(scope->language_mode())) {
         CHECK_EQ((source_data[i].expected & EVAL) != 0,
@@ -1065,7 +1446,6 @@ TEST(DiscardFunctionBody) {
     i::parsing::ParseProgram(&info, isolate);
     function = info.literal();
     CHECK_NOT_NULL(function);
-    CHECK_NOT_NULL(function->body());
     CHECK_EQ(1, function->body()->length());
     i::FunctionLiteral* inner =
         function->body()->first()->AsExpressionStatement()->expression()->
@@ -1081,7 +1461,7 @@ TEST(DiscardFunctionBody) {
       // TODO(conradw): This path won't be hit until the other test cases can be
       // uncommented.
       UNREACHABLE();
-      CHECK_NOT_NULL(inner->body());
+      CHECK(inner->ShouldEagerCompile());
       CHECK_GE(2, inner->body()->length());
       i::Expression* exp = inner->body()->at(1)->AsExpressionStatement()->
                            expression()->AsBinaryOperation()->right();
@@ -1095,7 +1475,7 @@ TEST(DiscardFunctionBody) {
               AsFunctionLiteral();
       }
     }
-    CHECK_NULL(fun->body());
+    CHECK(!fun->ShouldEagerCompile());
   }
 }
 
@@ -1115,10 +1495,10 @@ enum ParserFlag {
   kAllowNatives,
   kAllowHarmonyPublicFields,
   kAllowHarmonyPrivateFields,
+  kAllowHarmonyPrivateMethods,
   kAllowHarmonyStaticFields,
   kAllowHarmonyDynamicImport,
   kAllowHarmonyImportMeta,
-  kAllowHarmonyDoExpressions,
   kAllowHarmonyNumericSeparator
 };
 
@@ -1132,10 +1512,10 @@ void SetGlobalFlags(i::EnumSet<ParserFlag> flags) {
   i::FLAG_allow_natives_syntax = flags.Contains(kAllowNatives);
   i::FLAG_harmony_public_fields = flags.Contains(kAllowHarmonyPublicFields);
   i::FLAG_harmony_private_fields = flags.Contains(kAllowHarmonyPrivateFields);
+  i::FLAG_harmony_private_methods = flags.Contains(kAllowHarmonyPrivateMethods);
   i::FLAG_harmony_static_fields = flags.Contains(kAllowHarmonyStaticFields);
   i::FLAG_harmony_dynamic_import = flags.Contains(kAllowHarmonyDynamicImport);
   i::FLAG_harmony_import_meta = flags.Contains(kAllowHarmonyImportMeta);
-  i::FLAG_harmony_do_expressions = flags.Contains(kAllowHarmonyDoExpressions);
   i::FLAG_harmony_numeric_separator =
       flags.Contains(kAllowHarmonyNumericSeparator);
 }
@@ -1146,14 +1526,14 @@ void SetParserFlags(i::PreParser* parser, i::EnumSet<ParserFlag> flags) {
       flags.Contains(kAllowHarmonyPublicFields));
   parser->set_allow_harmony_private_fields(
       flags.Contains(kAllowHarmonyPrivateFields));
+  parser->set_allow_harmony_private_methods(
+      flags.Contains(kAllowHarmonyPrivateMethods));
   parser->set_allow_harmony_static_fields(
       flags.Contains(kAllowHarmonyStaticFields));
   parser->set_allow_harmony_dynamic_import(
       flags.Contains(kAllowHarmonyDynamicImport));
   parser->set_allow_harmony_import_meta(
       flags.Contains(kAllowHarmonyImportMeta));
-  parser->set_allow_harmony_do_expressions(
-      flags.Contains(kAllowHarmonyDoExpressions));
   parser->set_allow_harmony_numeric_separator(
       flags.Contains(kAllowHarmonyNumericSeparator));
 }
@@ -1173,7 +1553,7 @@ void TestParserSyncWithFlags(i::Handle<i::String> source,
   if (test_preparser) {
     std::unique_ptr<i::Utf16CharacterStream> stream(
         i::ScannerStream::For(isolate, source));
-    i::Scanner scanner(isolate->unicode_cache(), stream.get(), is_module);
+    i::Scanner scanner(stream.get(), is_module);
     i::Zone zone(CcTest::i_isolate()->allocator(), ZONE_NAME);
     i::AstValueFactory ast_value_factory(
         &zone, CcTest::i_isolate()->ast_string_constants(),
@@ -1221,7 +1601,8 @@ void TestParserSyncWithFlags(i::Handle<i::String> source,
           source->ToCString().get(), message_string->ToCString().get());
     }
 
-    if (test_preparser && !pending_error_handler.has_pending_error()) {
+    if (test_preparser && !pending_error_handler.has_pending_error() &&
+        !pending_error_handler.has_error_unidentifiable_by_preparser()) {
       FATAL(
           "Parser failed on:\n"
           "\t%s\n"
@@ -1230,8 +1611,10 @@ void TestParserSyncWithFlags(i::Handle<i::String> source,
           "However, the preparser succeeded",
           source->ToCString().get(), message_string->ToCString().get());
     }
-    // Check that preparser and parser produce the same error.
-    if (test_preparser && !ignore_error_msg) {
+    // Check that preparser and parser produce the same error, except for cases
+    // where we do not track errors in the preparser.
+    if (test_preparser && !ignore_error_msg &&
+        !pending_error_handler.has_error_unidentifiable_by_preparser()) {
       i::Handle<i::String> preparser_message =
           pending_error_handler.FormatErrorMessageForTest(CcTest::i_isolate());
       if (!i::String::Equals(isolate, message_string, preparser_message)) {
@@ -1456,6 +1839,7 @@ void RunParserSyncTest(
                                context_data[i][0],
                                statement_data[j],
                                context_data[i][1]);
+      PrintF("%s\n", program.start());
       CHECK_EQ(length, kProgramSize);
       TestParserSync(program.start(), flags, flags_len, result,
                      always_true_flags, always_true_len, always_false_flags,
@@ -1721,7 +2105,7 @@ TEST(ErrorsFutureStrictReservedWords) {
                                           {"() => {", "}"},
                                           {nullptr, nullptr}};
   const char* invalid_statements[] = {
-      FUTURE_STRICT_RESERVED_LEX_BINDINGS("let") nullptr};
+      FUTURE_STRICT_RESERVED_LEX_BINDINGS(let) nullptr};
 
   RunParserSyncTest(non_strict_contexts, invalid_statements, kError);
 }
@@ -2280,7 +2664,7 @@ TEST(OptionalCatchBinding) {
     {"try {", "} catch ({e}) { }"},
     {"try {} catch ({e}) {", "}"},
     {"function f() {", "}"},
-    { NULL, NULL }
+    { nullptr, nullptr }
   };
 
   const char* statement_data[] = {
@@ -2288,34 +2672,11 @@ TEST(OptionalCatchBinding) {
     "try { } catch { } finally { }",
     "try { let e; } catch { let e; }",
     "try { let e; } catch { let e; } finally { let e; }",
-    NULL
+    nullptr
   };
   // clang-format on
 
   RunParserSyncTest(context_data, statement_data, kSuccess);
-}
-
-TEST(OptionalCatchBindingInDoExpression) {
-  // This is an edge case no otherwise hit: a catch scope in a parameter
-  // expression which needs its own scope.
-  // clang-format off
-  const char* context_data[][2] = {
-    {"((x = (eval(''), do {", "}))=>{})()"},
-    { NULL, NULL }
-  };
-
-  const char* statement_data[] = {
-    "try { } catch { }",
-    "try { } catch { } finally { }",
-    "try { let e; } catch { let e; }",
-    "try { let e; } catch { let e; } finally { let e; }",
-    NULL
-  };
-  // clang-format on
-
-  static const ParserFlag do_and_catch_flags[] = {kAllowHarmonyDoExpressions};
-  RunParserSyncTest(context_data, statement_data, kSuccess, NULL, 0,
-                    do_and_catch_flags, arraysize(do_and_catch_flags));
 }
 
 TEST(ErrorsRegexpLiteral) {
@@ -2831,7 +3192,7 @@ TEST(SerializationOfMaybeAssignmentFlag) {
   v8::Local<v8::Value> v = CompileRun(src);
   i::Handle<i::Object> o = v8::Utils::OpenHandle(*v);
   i::Handle<i::JSFunction> f = i::Handle<i::JSFunction>::cast(o);
-  i::Context* context = f->context();
+  i::Context context = f->context();
   i::AstValueFactory avf(&zone, isolate->ast_string_constants(),
                          isolate->heap()->HashSeed());
   const i::AstRawString* name = avf.GetOneByteString("result");
@@ -2847,7 +3208,7 @@ TEST(SerializationOfMaybeAssignmentFlag) {
   CHECK_NOT_NULL(name);
 
   // Get result from h's function context (that is f's context)
-  i::Variable* var = s->Lookup(name);
+  i::Variable* var = s->LookupForTesting(name);
 
   CHECK_NOT_NULL(var);
   // Maybe assigned should survive deserialization
@@ -2881,7 +3242,7 @@ TEST(IfArgumentsArrayAccessedThenParametersMaybeAssigned) {
   v8::Local<v8::Value> v = CompileRun(src);
   i::Handle<i::Object> o = v8::Utils::OpenHandle(*v);
   i::Handle<i::JSFunction> f = i::Handle<i::JSFunction>::cast(o);
-  i::Context* context = f->context();
+  i::Context context = f->context();
   i::AstValueFactory avf(&zone, isolate->ast_string_constants(),
                          isolate->heap()->HashSeed());
   const i::AstRawString* name_x = avf.GetOneByteString("x");
@@ -2895,7 +3256,7 @@ TEST(IfArgumentsArrayAccessedThenParametersMaybeAssigned) {
   CHECK(s != script_scope);
 
   // Get result from f's function context (that is g's outer context)
-  i::Variable* var_x = s->Lookup(name_x);
+  i::Variable* var_x = s->LookupForTesting(name_x);
   CHECK_NOT_NULL(var_x);
   CHECK_EQ(var_x->maybe_assigned(), i::kMaybeAssigned);
 }
@@ -3067,17 +3428,13 @@ TEST(InnerAssignment) {
         DCHECK(scope->is_function_scope());
         const i::AstRawString* var_name =
             info->ast_value_factory()->GetOneByteString("x");
-        i::Variable* var = scope->Lookup(var_name);
+        i::Variable* var = scope->LookupForTesting(var_name);
         bool expected = outers[i].assigned || inners[j].assigned;
         CHECK_NOT_NULL(var);
         CHECK(var->is_used() || !expected);
         bool is_maybe_assigned = var->maybe_assigned() == i::kMaybeAssigned;
-        if (i::FLAG_lazy_inner_functions) {
-          CHECK(is_maybe_assigned == expected ||
-                (is_maybe_assigned && inners[j].allow_error_in_inner_function));
-        } else {
-          CHECK_EQ(is_maybe_assigned, expected);
-        }
+        CHECK(is_maybe_assigned == expected ||
+              (is_maybe_assigned && inners[j].allow_error_in_inner_function));
       }
     }
   }
@@ -3168,7 +3525,7 @@ TEST(MaybeAssignedParameters) {
       CHECK(scope->is_function_scope());
       const i::AstRawString* var_name =
           info->ast_value_factory()->GetOneByteString("arg");
-      i::Variable* var = scope->Lookup(var_name);
+      i::Variable* var = scope->LookupForTesting(var_name);
       CHECK(var->is_used() || !assigned);
       bool is_maybe_assigned = var->maybe_assigned() == i::kMaybeAssigned;
       CHECK_EQ(is_maybe_assigned, assigned);
@@ -3212,7 +3569,7 @@ static void TestMaybeAssigned(Input input, const char* variable, bool module,
     scope = i::ScopeTestHelper::FindScope(scope, input.location);
     const i::AstRawString* var_name =
         info->ast_value_factory()->GetOneByteString(variable);
-    var = scope->Lookup(var_name);
+    var = scope->LookupForTesting(var_name);
   }
 
   CHECK_NOT_NULL(var);
@@ -3240,272 +3597,276 @@ TEST(MaybeAssignedInsideLoop) {
   std::vector<unsigned> top;  // Can't use {} in initializers below.
 
   Input module_and_script_tests[] = {
-      {1, "for (j=x; j<10; ++j) { foo = j }", top},
-      {1, "for (j=x; j<10; ++j) { [foo] = [j] }", top},
-      {1, "for (j=x; j<10; ++j) { var foo = j }", top},
-      {1, "for (j=x; j<10; ++j) { var [foo] = [j] }", top},
-      {0, "for (j=x; j<10; ++j) { let foo = j }", {0}},
-      {0, "for (j=x; j<10; ++j) { let [foo] = [j] }", {0}},
-      {0, "for (j=x; j<10; ++j) { const foo = j }", {0}},
-      {0, "for (j=x; j<10; ++j) { const [foo] = [j] }", {0}},
-      {0, "for (j=x; j<10; ++j) { function foo() {return j} }", {0}},
+      {true, "for (j=x; j<10; ++j) { foo = j }", top},
+      {true, "for (j=x; j<10; ++j) { [foo] = [j] }", top},
+      {true, "for (j=x; j<10; ++j) { var foo = j }", top},
+      {true, "for (j=x; j<10; ++j) { var [foo] = [j] }", top},
+      {false, "for (j=x; j<10; ++j) { let foo = j }", {0}},
+      {false, "for (j=x; j<10; ++j) { let [foo] = [j] }", {0}},
+      {false, "for (j=x; j<10; ++j) { const foo = j }", {0}},
+      {false, "for (j=x; j<10; ++j) { const [foo] = [j] }", {0}},
+      {false, "for (j=x; j<10; ++j) { function foo() {return j} }", {0}},
 
-      {1, "for ({j}=x; j<10; ++j) { foo = j }", top},
-      {1, "for ({j}=x; j<10; ++j) { [foo] = [j] }", top},
-      {1, "for ({j}=x; j<10; ++j) { var foo = j }", top},
-      {1, "for ({j}=x; j<10; ++j) { var [foo] = [j] }", top},
-      {0, "for ({j}=x; j<10; ++j) { let foo = j }", {0}},
-      {0, "for ({j}=x; j<10; ++j) { let [foo] = [j] }", {0}},
-      {0, "for ({j}=x; j<10; ++j) { const foo = j }", {0}},
-      {0, "for ({j}=x; j<10; ++j) { const [foo] = [j] }", {0}},
-      {0, "for ({j}=x; j<10; ++j) { function foo() {return j} }", {0}},
+      {true, "for ({j}=x; j<10; ++j) { foo = j }", top},
+      {true, "for ({j}=x; j<10; ++j) { [foo] = [j] }", top},
+      {true, "for ({j}=x; j<10; ++j) { var foo = j }", top},
+      {true, "for ({j}=x; j<10; ++j) { var [foo] = [j] }", top},
+      {false, "for ({j}=x; j<10; ++j) { let foo = j }", {0}},
+      {false, "for ({j}=x; j<10; ++j) { let [foo] = [j] }", {0}},
+      {false, "for ({j}=x; j<10; ++j) { const foo = j }", {0}},
+      {false, "for ({j}=x; j<10; ++j) { const [foo] = [j] }", {0}},
+      {false, "for ({j}=x; j<10; ++j) { function foo() {return j} }", {0}},
 
-      {1, "for (var j=x; j<10; ++j) { foo = j }", top},
-      {1, "for (var j=x; j<10; ++j) { [foo] = [j] }", top},
-      {1, "for (var j=x; j<10; ++j) { var foo = j }", top},
-      {1, "for (var j=x; j<10; ++j) { var [foo] = [j] }", top},
-      {0, "for (var j=x; j<10; ++j) { let foo = j }", {0}},
-      {0, "for (var j=x; j<10; ++j) { let [foo] = [j] }", {0}},
-      {0, "for (var j=x; j<10; ++j) { const foo = j }", {0}},
-      {0, "for (var j=x; j<10; ++j) { const [foo] = [j] }", {0}},
-      {0, "for (var j=x; j<10; ++j) { function foo() {return j} }", {0}},
+      {true, "for (var j=x; j<10; ++j) { foo = j }", top},
+      {true, "for (var j=x; j<10; ++j) { [foo] = [j] }", top},
+      {true, "for (var j=x; j<10; ++j) { var foo = j }", top},
+      {true, "for (var j=x; j<10; ++j) { var [foo] = [j] }", top},
+      {false, "for (var j=x; j<10; ++j) { let foo = j }", {0}},
+      {false, "for (var j=x; j<10; ++j) { let [foo] = [j] }", {0}},
+      {false, "for (var j=x; j<10; ++j) { const foo = j }", {0}},
+      {false, "for (var j=x; j<10; ++j) { const [foo] = [j] }", {0}},
+      {false, "for (var j=x; j<10; ++j) { function foo() {return j} }", {0}},
 
-      {1, "for (var {j}=x; j<10; ++j) { foo = j }", top},
-      {1, "for (var {j}=x; j<10; ++j) { [foo] = [j] }", top},
-      {1, "for (var {j}=x; j<10; ++j) { var foo = j }", top},
-      {1, "for (var {j}=x; j<10; ++j) { var [foo] = [j] }", top},
-      {0, "for (var {j}=x; j<10; ++j) { let foo = j }", {0}},
-      {0, "for (var {j}=x; j<10; ++j) { let [foo] = [j] }", {0}},
-      {0, "for (var {j}=x; j<10; ++j) { const foo = j }", {0}},
-      {0, "for (var {j}=x; j<10; ++j) { const [foo] = [j] }", {0}},
-      {0, "for (var {j}=x; j<10; ++j) { function foo() {return j} }", {0}},
+      {true, "for (var {j}=x; j<10; ++j) { foo = j }", top},
+      {true, "for (var {j}=x; j<10; ++j) { [foo] = [j] }", top},
+      {true, "for (var {j}=x; j<10; ++j) { var foo = j }", top},
+      {true, "for (var {j}=x; j<10; ++j) { var [foo] = [j] }", top},
+      {false, "for (var {j}=x; j<10; ++j) { let foo = j }", {0}},
+      {false, "for (var {j}=x; j<10; ++j) { let [foo] = [j] }", {0}},
+      {false, "for (var {j}=x; j<10; ++j) { const foo = j }", {0}},
+      {false, "for (var {j}=x; j<10; ++j) { const [foo] = [j] }", {0}},
+      {false, "for (var {j}=x; j<10; ++j) { function foo() {return j} }", {0}},
 
-      {1, "for (let j=x; j<10; ++j) { foo = j }", top},
-      {1, "for (let j=x; j<10; ++j) { [foo] = [j] }", top},
-      {1, "for (let j=x; j<10; ++j) { var foo = j }", top},
-      {1, "for (let j=x; j<10; ++j) { var [foo] = [j] }", top},
-      {0, "for (let j=x; j<10; ++j) { let foo = j }", {0, 0}},
-      {0, "for (let j=x; j<10; ++j) { let [foo] = [j] }", {0, 0, 0}},
-      {0, "for (let j=x; j<10; ++j) { const foo = j }", {0, 0}},
-      {0, "for (let j=x; j<10; ++j) { const [foo] = [j] }", {0, 0, 0}},
-      {0, "for (let j=x; j<10; ++j) { function foo() {return j} }", {0, 0, 0}},
+      {true, "for (let j=x; j<10; ++j) { foo = j }", top},
+      {true, "for (let j=x; j<10; ++j) { [foo] = [j] }", top},
+      {true, "for (let j=x; j<10; ++j) { var foo = j }", top},
+      {true, "for (let j=x; j<10; ++j) { var [foo] = [j] }", top},
+      {false, "for (let j=x; j<10; ++j) { let foo = j }", {0, 0}},
+      {false, "for (let j=x; j<10; ++j) { let [foo] = [j] }", {0, 0, 0}},
+      {false, "for (let j=x; j<10; ++j) { const foo = j }", {0, 0}},
+      {false, "for (let j=x; j<10; ++j) { const [foo] = [j] }", {0, 0, 0}},
+      {false,
+       "for (let j=x; j<10; ++j) { function foo() {return j} }",
+       {0, 0, 0}},
 
-      {1, "for (let {j}=x; j<10; ++j) { foo = j }", top},
-      {1, "for (let {j}=x; j<10; ++j) { [foo] = [j] }", top},
-      {1, "for (let {j}=x; j<10; ++j) { var foo = j }", top},
-      {1, "for (let {j}=x; j<10; ++j) { var [foo] = [j] }", top},
-      {0, "for (let {j}=x; j<10; ++j) { let foo = j }", {0, 0}},
-      {0, "for (let {j}=x; j<10; ++j) { let [foo] = [j] }", {0, 0, 0}},
-      {0, "for (let {j}=x; j<10; ++j) { const foo = j }", {0, 0}},
-      {0, "for (let {j}=x; j<10; ++j) { const [foo] = [j] }", {0, 0, 0}},
-      {0, "for (let {j}=x; j<10; ++j) { function foo(){return j} }", {0, 0, 0}},
+      {true, "for (let {j}=x; j<10; ++j) { foo = j }", top},
+      {true, "for (let {j}=x; j<10; ++j) { [foo] = [j] }", top},
+      {true, "for (let {j}=x; j<10; ++j) { var foo = j }", top},
+      {true, "for (let {j}=x; j<10; ++j) { var [foo] = [j] }", top},
+      {false, "for (let {j}=x; j<10; ++j) { let foo = j }", {0, 0}},
+      {false, "for (let {j}=x; j<10; ++j) { let [foo] = [j] }", {0, 0, 0}},
+      {false, "for (let {j}=x; j<10; ++j) { const foo = j }", {0, 0}},
+      {false, "for (let {j}=x; j<10; ++j) { const [foo] = [j] }", {0, 0, 0}},
+      {false,
+       "for (let {j}=x; j<10; ++j) { function foo(){return j} }",
+       {0, 0, 0}},
 
-      {1, "for (j of x) { foo = j }", top},
-      {1, "for (j of x) { [foo] = [j] }", top},
-      {1, "for (j of x) { var foo = j }", top},
-      {1, "for (j of x) { var [foo] = [j] }", top},
-      {0, "for (j of x) { let foo = j }", {1}},
-      {0, "for (j of x) { let [foo] = [j] }", {1}},
-      {0, "for (j of x) { const foo = j }", {1}},
-      {0, "for (j of x) { const [foo] = [j] }", {1}},
-      {0, "for (j of x) { function foo() {return j} }", {1}},
+      {true, "for (j of x) { foo = j }", top},
+      {true, "for (j of x) { [foo] = [j] }", top},
+      {true, "for (j of x) { var foo = j }", top},
+      {true, "for (j of x) { var [foo] = [j] }", top},
+      {false, "for (j of x) { let foo = j }", {1}},
+      {false, "for (j of x) { let [foo] = [j] }", {1}},
+      {false, "for (j of x) { const foo = j }", {1}},
+      {false, "for (j of x) { const [foo] = [j] }", {1}},
+      {false, "for (j of x) { function foo() {return j} }", {1}},
 
-      {1, "for ({j} of x) { foo = j }", top},
-      {1, "for ({j} of x) { [foo] = [j] }", top},
-      {1, "for ({j} of x) { var foo = j }", top},
-      {1, "for ({j} of x) { var [foo] = [j] }", top},
-      {0, "for ({j} of x) { let foo = j }", {1}},
-      {0, "for ({j} of x) { let [foo] = [j] }", {1}},
-      {0, "for ({j} of x) { const foo = j }", {1}},
-      {0, "for ({j} of x) { const [foo] = [j] }", {1}},
-      {0, "for ({j} of x) { function foo() {return j} }", {1}},
+      {true, "for ({j} of x) { foo = j }", top},
+      {true, "for ({j} of x) { [foo] = [j] }", top},
+      {true, "for ({j} of x) { var foo = j }", top},
+      {true, "for ({j} of x) { var [foo] = [j] }", top},
+      {false, "for ({j} of x) { let foo = j }", {1}},
+      {false, "for ({j} of x) { let [foo] = [j] }", {1}},
+      {false, "for ({j} of x) { const foo = j }", {1}},
+      {false, "for ({j} of x) { const [foo] = [j] }", {1}},
+      {false, "for ({j} of x) { function foo() {return j} }", {1}},
 
-      {1, "for (var j of x) { foo = j }", top},
-      {1, "for (var j of x) { [foo] = [j] }", top},
-      {1, "for (var j of x) { var foo = j }", top},
-      {1, "for (var j of x) { var [foo] = [j] }", top},
-      {0, "for (var j of x) { let foo = j }", {1}},
-      {0, "for (var j of x) { let [foo] = [j] }", {1}},
-      {0, "for (var j of x) { const foo = j }", {1}},
-      {0, "for (var j of x) { const [foo] = [j] }", {1}},
-      {0, "for (var j of x) { function foo() {return j} }", {1}},
+      {true, "for (var j of x) { foo = j }", top},
+      {true, "for (var j of x) { [foo] = [j] }", top},
+      {true, "for (var j of x) { var foo = j }", top},
+      {true, "for (var j of x) { var [foo] = [j] }", top},
+      {false, "for (var j of x) { let foo = j }", {1}},
+      {false, "for (var j of x) { let [foo] = [j] }", {1}},
+      {false, "for (var j of x) { const foo = j }", {1}},
+      {false, "for (var j of x) { const [foo] = [j] }", {1}},
+      {false, "for (var j of x) { function foo() {return j} }", {1}},
 
-      {1, "for (var {j} of x) { foo = j }", top},
-      {1, "for (var {j} of x) { [foo] = [j] }", top},
-      {1, "for (var {j} of x) { var foo = j }", top},
-      {1, "for (var {j} of x) { var [foo] = [j] }", top},
-      {0, "for (var {j} of x) { let foo = j }", {1}},
-      {0, "for (var {j} of x) { let [foo] = [j] }", {1}},
-      {0, "for (var {j} of x) { const foo = j }", {1}},
-      {0, "for (var {j} of x) { const [foo] = [j] }", {1}},
-      {0, "for (var {j} of x) { function foo() {return j} }", {1}},
+      {true, "for (var {j} of x) { foo = j }", top},
+      {true, "for (var {j} of x) { [foo] = [j] }", top},
+      {true, "for (var {j} of x) { var foo = j }", top},
+      {true, "for (var {j} of x) { var [foo] = [j] }", top},
+      {false, "for (var {j} of x) { let foo = j }", {1}},
+      {false, "for (var {j} of x) { let [foo] = [j] }", {1}},
+      {false, "for (var {j} of x) { const foo = j }", {1}},
+      {false, "for (var {j} of x) { const [foo] = [j] }", {1}},
+      {false, "for (var {j} of x) { function foo() {return j} }", {1}},
 
-      {1, "for (let j of x) { foo = j }", top},
-      {1, "for (let j of x) { [foo] = [j] }", top},
-      {1, "for (let j of x) { var foo = j }", top},
-      {1, "for (let j of x) { var [foo] = [j] }", top},
-      {0, "for (let j of x) { let foo = j }", {0, 1, 0}},
-      {0, "for (let j of x) { let [foo] = [j] }", {0, 1, 0}},
-      {0, "for (let j of x) { const foo = j }", {0, 1, 0}},
-      {0, "for (let j of x) { const [foo] = [j] }", {0, 1, 0}},
-      {0, "for (let j of x) { function foo() {return j} }", {0, 1, 0}},
+      {true, "for (let j of x) { foo = j }", top},
+      {true, "for (let j of x) { [foo] = [j] }", top},
+      {true, "for (let j of x) { var foo = j }", top},
+      {true, "for (let j of x) { var [foo] = [j] }", top},
+      {false, "for (let j of x) { let foo = j }", {0, 1, 0}},
+      {false, "for (let j of x) { let [foo] = [j] }", {0, 1, 0}},
+      {false, "for (let j of x) { const foo = j }", {0, 1, 0}},
+      {false, "for (let j of x) { const [foo] = [j] }", {0, 1, 0}},
+      {false, "for (let j of x) { function foo() {return j} }", {0, 1, 0}},
 
-      {1, "for (let {j} of x) { foo = j }", top},
-      {1, "for (let {j} of x) { [foo] = [j] }", top},
-      {1, "for (let {j} of x) { var foo = j }", top},
-      {1, "for (let {j} of x) { var [foo] = [j] }", top},
-      {0, "for (let {j} of x) { let foo = j }", {0, 1, 0}},
-      {0, "for (let {j} of x) { let [foo] = [j] }", {0, 1, 0}},
-      {0, "for (let {j} of x) { const foo = j }", {0, 1, 0}},
-      {0, "for (let {j} of x) { const [foo] = [j] }", {0, 1, 0}},
-      {0, "for (let {j} of x) { function foo() {return j} }", {0, 1, 0}},
+      {true, "for (let {j} of x) { foo = j }", top},
+      {true, "for (let {j} of x) { [foo] = [j] }", top},
+      {true, "for (let {j} of x) { var foo = j }", top},
+      {true, "for (let {j} of x) { var [foo] = [j] }", top},
+      {false, "for (let {j} of x) { let foo = j }", {0, 1, 0}},
+      {false, "for (let {j} of x) { let [foo] = [j] }", {0, 1, 0}},
+      {false, "for (let {j} of x) { const foo = j }", {0, 1, 0}},
+      {false, "for (let {j} of x) { const [foo] = [j] }", {0, 1, 0}},
+      {false, "for (let {j} of x) { function foo() {return j} }", {0, 1, 0}},
 
-      {1, "for (const j of x) { foo = j }", top},
-      {1, "for (const j of x) { [foo] = [j] }", top},
-      {1, "for (const j of x) { var foo = j }", top},
-      {1, "for (const j of x) { var [foo] = [j] }", top},
-      {0, "for (const j of x) { let foo = j }", {0, 1, 0}},
-      {0, "for (const j of x) { let [foo] = [j] }", {0, 1, 0}},
-      {0, "for (const j of x) { const foo = j }", {0, 1, 0}},
-      {0, "for (const j of x) { const [foo] = [j] }", {0, 1, 0}},
-      {0, "for (const j of x) { function foo() {return j} }", {0, 1, 0}},
+      {true, "for (const j of x) { foo = j }", top},
+      {true, "for (const j of x) { [foo] = [j] }", top},
+      {true, "for (const j of x) { var foo = j }", top},
+      {true, "for (const j of x) { var [foo] = [j] }", top},
+      {false, "for (const j of x) { let foo = j }", {0, 1, 0}},
+      {false, "for (const j of x) { let [foo] = [j] }", {0, 1, 0}},
+      {false, "for (const j of x) { const foo = j }", {0, 1, 0}},
+      {false, "for (const j of x) { const [foo] = [j] }", {0, 1, 0}},
+      {false, "for (const j of x) { function foo() {return j} }", {0, 1, 0}},
 
-      {1, "for (const {j} of x) { foo = j }", top},
-      {1, "for (const {j} of x) { [foo] = [j] }", top},
-      {1, "for (const {j} of x) { var foo = j }", top},
-      {1, "for (const {j} of x) { var [foo] = [j] }", top},
-      {0, "for (const {j} of x) { let foo = j }", {0, 1, 0}},
-      {0, "for (const {j} of x) { let [foo] = [j] }", {0, 1, 0}},
-      {0, "for (const {j} of x) { const foo = j }", {0, 1, 0}},
-      {0, "for (const {j} of x) { const [foo] = [j] }", {0, 1, 0}},
-      {0, "for (const {j} of x) { function foo() {return j} }", {0, 1, 0}},
+      {true, "for (const {j} of x) { foo = j }", top},
+      {true, "for (const {j} of x) { [foo] = [j] }", top},
+      {true, "for (const {j} of x) { var foo = j }", top},
+      {true, "for (const {j} of x) { var [foo] = [j] }", top},
+      {false, "for (const {j} of x) { let foo = j }", {0, 1, 0}},
+      {false, "for (const {j} of x) { let [foo] = [j] }", {0, 1, 0}},
+      {false, "for (const {j} of x) { const foo = j }", {0, 1, 0}},
+      {false, "for (const {j} of x) { const [foo] = [j] }", {0, 1, 0}},
+      {false, "for (const {j} of x) { function foo() {return j} }", {0, 1, 0}},
 
-      {1, "for (j in x) { foo = j }", top},
-      {1, "for (j in x) { [foo] = [j] }", top},
-      {1, "for (j in x) { var foo = j }", top},
-      {1, "for (j in x) { var [foo] = [j] }", top},
-      {0, "for (j in x) { let foo = j }", {0}},
-      {0, "for (j in x) { let [foo] = [j] }", {0}},
-      {0, "for (j in x) { const foo = j }", {0}},
-      {0, "for (j in x) { const [foo] = [j] }", {0}},
-      {0, "for (j in x) { function foo() {return j} }", {0}},
+      {true, "for (j in x) { foo = j }", top},
+      {true, "for (j in x) { [foo] = [j] }", top},
+      {true, "for (j in x) { var foo = j }", top},
+      {true, "for (j in x) { var [foo] = [j] }", top},
+      {false, "for (j in x) { let foo = j }", {0}},
+      {false, "for (j in x) { let [foo] = [j] }", {0}},
+      {false, "for (j in x) { const foo = j }", {0}},
+      {false, "for (j in x) { const [foo] = [j] }", {0}},
+      {false, "for (j in x) { function foo() {return j} }", {0}},
 
-      {1, "for ({j} in x) { foo = j }", top},
-      {1, "for ({j} in x) { [foo] = [j] }", top},
-      {1, "for ({j} in x) { var foo = j }", top},
-      {1, "for ({j} in x) { var [foo] = [j] }", top},
-      {0, "for ({j} in x) { let foo = j }", {0}},
-      {0, "for ({j} in x) { let [foo] = [j] }", {0}},
-      {0, "for ({j} in x) { const foo = j }", {0}},
-      {0, "for ({j} in x) { const [foo] = [j] }", {0}},
-      {0, "for ({j} in x) { function foo() {return j} }", {0}},
+      {true, "for ({j} in x) { foo = j }", top},
+      {true, "for ({j} in x) { [foo] = [j] }", top},
+      {true, "for ({j} in x) { var foo = j }", top},
+      {true, "for ({j} in x) { var [foo] = [j] }", top},
+      {false, "for ({j} in x) { let foo = j }", {0}},
+      {false, "for ({j} in x) { let [foo] = [j] }", {0}},
+      {false, "for ({j} in x) { const foo = j }", {0}},
+      {false, "for ({j} in x) { const [foo] = [j] }", {0}},
+      {false, "for ({j} in x) { function foo() {return j} }", {0}},
 
-      {1, "for (var j in x) { foo = j }", top},
-      {1, "for (var j in x) { [foo] = [j] }", top},
-      {1, "for (var j in x) { var foo = j }", top},
-      {1, "for (var j in x) { var [foo] = [j] }", top},
-      {0, "for (var j in x) { let foo = j }", {0}},
-      {0, "for (var j in x) { let [foo] = [j] }", {0}},
-      {0, "for (var j in x) { const foo = j }", {0}},
-      {0, "for (var j in x) { const [foo] = [j] }", {0}},
-      {0, "for (var j in x) { function foo() {return j} }", {0}},
+      {true, "for (var j in x) { foo = j }", top},
+      {true, "for (var j in x) { [foo] = [j] }", top},
+      {true, "for (var j in x) { var foo = j }", top},
+      {true, "for (var j in x) { var [foo] = [j] }", top},
+      {false, "for (var j in x) { let foo = j }", {0}},
+      {false, "for (var j in x) { let [foo] = [j] }", {0}},
+      {false, "for (var j in x) { const foo = j }", {0}},
+      {false, "for (var j in x) { const [foo] = [j] }", {0}},
+      {false, "for (var j in x) { function foo() {return j} }", {0}},
 
-      {1, "for (var {j} in x) { foo = j }", top},
-      {1, "for (var {j} in x) { [foo] = [j] }", top},
-      {1, "for (var {j} in x) { var foo = j }", top},
-      {1, "for (var {j} in x) { var [foo] = [j] }", top},
-      {0, "for (var {j} in x) { let foo = j }", {0}},
-      {0, "for (var {j} in x) { let [foo] = [j] }", {0}},
-      {0, "for (var {j} in x) { const foo = j }", {0}},
-      {0, "for (var {j} in x) { const [foo] = [j] }", {0}},
-      {0, "for (var {j} in x) { function foo() {return j} }", {0}},
+      {true, "for (var {j} in x) { foo = j }", top},
+      {true, "for (var {j} in x) { [foo] = [j] }", top},
+      {true, "for (var {j} in x) { var foo = j }", top},
+      {true, "for (var {j} in x) { var [foo] = [j] }", top},
+      {false, "for (var {j} in x) { let foo = j }", {0}},
+      {false, "for (var {j} in x) { let [foo] = [j] }", {0}},
+      {false, "for (var {j} in x) { const foo = j }", {0}},
+      {false, "for (var {j} in x) { const [foo] = [j] }", {0}},
+      {false, "for (var {j} in x) { function foo() {return j} }", {0}},
 
-      {1, "for (let j in x) { foo = j }", top},
-      {1, "for (let j in x) { [foo] = [j] }", top},
-      {1, "for (let j in x) { var foo = j }", top},
-      {1, "for (let j in x) { var [foo] = [j] }", top},
-      {0, "for (let j in x) { let foo = j }", {0, 0, 0}},
-      {0, "for (let j in x) { let [foo] = [j] }", {0, 0, 0}},
-      {0, "for (let j in x) { const foo = j }", {0, 0, 0}},
-      {0, "for (let j in x) { const [foo] = [j] }", {0, 0, 0}},
-      {0, "for (let j in x) { function foo() {return j} }", {0, 0, 0}},
+      {true, "for (let j in x) { foo = j }", top},
+      {true, "for (let j in x) { [foo] = [j] }", top},
+      {true, "for (let j in x) { var foo = j }", top},
+      {true, "for (let j in x) { var [foo] = [j] }", top},
+      {false, "for (let j in x) { let foo = j }", {0, 0, 0}},
+      {false, "for (let j in x) { let [foo] = [j] }", {0, 0, 0}},
+      {false, "for (let j in x) { const foo = j }", {0, 0, 0}},
+      {false, "for (let j in x) { const [foo] = [j] }", {0, 0, 0}},
+      {false, "for (let j in x) { function foo() {return j} }", {0, 0, 0}},
 
-      {1, "for (let {j} in x) { foo = j }", top},
-      {1, "for (let {j} in x) { [foo] = [j] }", top},
-      {1, "for (let {j} in x) { var foo = j }", top},
-      {1, "for (let {j} in x) { var [foo] = [j] }", top},
-      {0, "for (let {j} in x) { let foo = j }", {0, 0, 0}},
-      {0, "for (let {j} in x) { let [foo] = [j] }", {0, 0, 0}},
-      {0, "for (let {j} in x) { const foo = j }", {0, 0, 0}},
-      {0, "for (let {j} in x) { const [foo] = [j] }", {0, 0, 0}},
-      {0, "for (let {j} in x) { function foo() {return j} }", {0, 0, 0}},
+      {true, "for (let {j} in x) { foo = j }", top},
+      {true, "for (let {j} in x) { [foo] = [j] }", top},
+      {true, "for (let {j} in x) { var foo = j }", top},
+      {true, "for (let {j} in x) { var [foo] = [j] }", top},
+      {false, "for (let {j} in x) { let foo = j }", {0, 0, 0}},
+      {false, "for (let {j} in x) { let [foo] = [j] }", {0, 0, 0}},
+      {false, "for (let {j} in x) { const foo = j }", {0, 0, 0}},
+      {false, "for (let {j} in x) { const [foo] = [j] }", {0, 0, 0}},
+      {false, "for (let {j} in x) { function foo() {return j} }", {0, 0, 0}},
 
-      {1, "for (const j in x) { foo = j }", top},
-      {1, "for (const j in x) { [foo] = [j] }", top},
-      {1, "for (const j in x) { var foo = j }", top},
-      {1, "for (const j in x) { var [foo] = [j] }", top},
-      {0, "for (const j in x) { let foo = j }", {0, 0, 0}},
-      {0, "for (const j in x) { let [foo] = [j] }", {0, 0, 0}},
-      {0, "for (const j in x) { const foo = j }", {0, 0, 0}},
-      {0, "for (const j in x) { const [foo] = [j] }", {0, 0, 0}},
-      {0, "for (const j in x) { function foo() {return j} }", {0, 0, 0}},
+      {true, "for (const j in x) { foo = j }", top},
+      {true, "for (const j in x) { [foo] = [j] }", top},
+      {true, "for (const j in x) { var foo = j }", top},
+      {true, "for (const j in x) { var [foo] = [j] }", top},
+      {false, "for (const j in x) { let foo = j }", {0, 0, 0}},
+      {false, "for (const j in x) { let [foo] = [j] }", {0, 0, 0}},
+      {false, "for (const j in x) { const foo = j }", {0, 0, 0}},
+      {false, "for (const j in x) { const [foo] = [j] }", {0, 0, 0}},
+      {false, "for (const j in x) { function foo() {return j} }", {0, 0, 0}},
 
-      {1, "for (const {j} in x) { foo = j }", top},
-      {1, "for (const {j} in x) { [foo] = [j] }", top},
-      {1, "for (const {j} in x) { var foo = j }", top},
-      {1, "for (const {j} in x) { var [foo] = [j] }", top},
-      {0, "for (const {j} in x) { let foo = j }", {0, 0, 0}},
-      {0, "for (const {j} in x) { let [foo] = [j] }", {0, 0, 0}},
-      {0, "for (const {j} in x) { const foo = j }", {0, 0, 0}},
-      {0, "for (const {j} in x) { const [foo] = [j] }", {0, 0, 0}},
-      {0, "for (const {j} in x) { function foo() {return j} }", {0, 0, 0}},
+      {true, "for (const {j} in x) { foo = j }", top},
+      {true, "for (const {j} in x) { [foo] = [j] }", top},
+      {true, "for (const {j} in x) { var foo = j }", top},
+      {true, "for (const {j} in x) { var [foo] = [j] }", top},
+      {false, "for (const {j} in x) { let foo = j }", {0, 0, 0}},
+      {false, "for (const {j} in x) { let [foo] = [j] }", {0, 0, 0}},
+      {false, "for (const {j} in x) { const foo = j }", {0, 0, 0}},
+      {false, "for (const {j} in x) { const [foo] = [j] }", {0, 0, 0}},
+      {false, "for (const {j} in x) { function foo() {return j} }", {0, 0, 0}},
 
-      {1, "while (j) { foo = j }", top},
-      {1, "while (j) { [foo] = [j] }", top},
-      {1, "while (j) { var foo = j }", top},
-      {1, "while (j) { var [foo] = [j] }", top},
-      {0, "while (j) { let foo = j }", {0}},
-      {0, "while (j) { let [foo] = [j] }", {0}},
-      {0, "while (j) { const foo = j }", {0}},
-      {0, "while (j) { const [foo] = [j] }", {0}},
-      {0, "while (j) { function foo() {return j} }", {0}},
+      {true, "while (j) { foo = j }", top},
+      {true, "while (j) { [foo] = [j] }", top},
+      {true, "while (j) { var foo = j }", top},
+      {true, "while (j) { var [foo] = [j] }", top},
+      {false, "while (j) { let foo = j }", {0}},
+      {false, "while (j) { let [foo] = [j] }", {0}},
+      {false, "while (j) { const foo = j }", {0}},
+      {false, "while (j) { const [foo] = [j] }", {0}},
+      {false, "while (j) { function foo() {return j} }", {0}},
 
-      {1, "do { foo = j } while (j)", top},
-      {1, "do { [foo] = [j] } while (j)", top},
-      {1, "do { var foo = j } while (j)", top},
-      {1, "do { var [foo] = [j] } while (j)", top},
-      {0, "do { let foo = j } while (j)", {0}},
-      {0, "do { let [foo] = [j] } while (j)", {0}},
-      {0, "do { const foo = j } while (j)", {0}},
-      {0, "do { const [foo] = [j] } while (j)", {0}},
-      {0, "do { function foo() {return j} } while (j)", {0}},
+      {true, "do { foo = j } while (j)", top},
+      {true, "do { [foo] = [j] } while (j)", top},
+      {true, "do { var foo = j } while (j)", top},
+      {true, "do { var [foo] = [j] } while (j)", top},
+      {false, "do { let foo = j } while (j)", {0}},
+      {false, "do { let [foo] = [j] } while (j)", {0}},
+      {false, "do { const foo = j } while (j)", {0}},
+      {false, "do { const [foo] = [j] } while (j)", {0}},
+      {false, "do { function foo() {return j} } while (j)", {0}},
   };
 
   Input script_only_tests[] = {
-      {1, "for (j=x; j<10; ++j) { function foo() {return j} }", top},
-      {1, "for ({j}=x; j<10; ++j) { function foo() {return j} }", top},
-      {1, "for (var j=x; j<10; ++j) { function foo() {return j} }", top},
-      {1, "for (var {j}=x; j<10; ++j) { function foo() {return j} }", top},
-      {1, "for (let j=x; j<10; ++j) { function foo() {return j} }", top},
-      {1, "for (let {j}=x; j<10; ++j) { function foo() {return j} }", top},
-      {1, "for (j of x) { function foo() {return j} }", top},
-      {1, "for ({j} of x) { function foo() {return j} }", top},
-      {1, "for (var j of x) { function foo() {return j} }", top},
-      {1, "for (var {j} of x) { function foo() {return j} }", top},
-      {1, "for (let j of x) { function foo() {return j} }", top},
-      {1, "for (let {j} of x) { function foo() {return j} }", top},
-      {1, "for (const j of x) { function foo() {return j} }", top},
-      {1, "for (const {j} of x) { function foo() {return j} }", top},
-      {1, "for (j in x) { function foo() {return j} }", top},
-      {1, "for ({j} in x) { function foo() {return j} }", top},
-      {1, "for (var j in x) { function foo() {return j} }", top},
-      {1, "for (var {j} in x) { function foo() {return j} }", top},
-      {1, "for (let j in x) { function foo() {return j} }", top},
-      {1, "for (let {j} in x) { function foo() {return j} }", top},
-      {1, "for (const j in x) { function foo() {return j} }", top},
-      {1, "for (const {j} in x) { function foo() {return j} }", top},
-      {1, "while (j) { function foo() {return j} }", top},
-      {1, "do { function foo() {return j} } while (j)", top},
+      {true, "for (j=x; j<10; ++j) { function foo() {return j} }", top},
+      {true, "for ({j}=x; j<10; ++j) { function foo() {return j} }", top},
+      {true, "for (var j=x; j<10; ++j) { function foo() {return j} }", top},
+      {true, "for (var {j}=x; j<10; ++j) { function foo() {return j} }", top},
+      {true, "for (let j=x; j<10; ++j) { function foo() {return j} }", top},
+      {true, "for (let {j}=x; j<10; ++j) { function foo() {return j} }", top},
+      {true, "for (j of x) { function foo() {return j} }", top},
+      {true, "for ({j} of x) { function foo() {return j} }", top},
+      {true, "for (var j of x) { function foo() {return j} }", top},
+      {true, "for (var {j} of x) { function foo() {return j} }", top},
+      {true, "for (let j of x) { function foo() {return j} }", top},
+      {true, "for (let {j} of x) { function foo() {return j} }", top},
+      {true, "for (const j of x) { function foo() {return j} }", top},
+      {true, "for (const {j} of x) { function foo() {return j} }", top},
+      {true, "for (j in x) { function foo() {return j} }", top},
+      {true, "for ({j} in x) { function foo() {return j} }", top},
+      {true, "for (var j in x) { function foo() {return j} }", top},
+      {true, "for (var {j} in x) { function foo() {return j} }", top},
+      {true, "for (let j in x) { function foo() {return j} }", top},
+      {true, "for (let {j} in x) { function foo() {return j} }", top},
+      {true, "for (const j in x) { function foo() {return j} }", top},
+      {true, "for (const {j} in x) { function foo() {return j} }", top},
+      {true, "while (j) { function foo() {return j} }", top},
+      {true, "do { function foo() {return j} } while (j)", top},
   };
 
   for (unsigned i = 0; i < arraysize(module_and_script_tests); ++i) {
@@ -4653,6 +5014,8 @@ TEST(StaticClassFieldsNoErrors) {
     "static 'a' = 0;",
     "static 'a';",
 
+    "static c = [c] = c",
+
     // ASI
     "static a = 0\n",
     "static a = 0\n b",
@@ -4743,6 +5106,8 @@ TEST(ClassFieldsNoErrors) {
     "'a' = 0;",
     "'a';",
 
+    "c = [c] = c",
+
     // ASI
     "a = 0\n",
     "a = 0\n b",
@@ -4794,6 +5159,254 @@ TEST(ClassFieldsNoErrors) {
                                             kAllowHarmonyStaticFields};
   RunParserSyncTest(context_data, class_body_data, kSuccess, nullptr, 0,
                     static_flags, arraysize(static_flags));
+}
+
+TEST(PrivateMethodsNoErrors) {
+  // clang-format off
+  // Tests proposed class methods syntax.
+  const char* context_data[][2] = {{"(class {", "});"},
+                                   {"(class extends Base {", "});"},
+                                   {"class C {", "}"},
+                                   {"class C extends Base {", "}"},
+                                   {nullptr, nullptr}};
+  const char* class_body_data[] = {
+    // Basic syntax
+    "#a() { }",
+    "get #a() { }",
+    "set #a(foo) { }",
+    "*#a() { }",
+    "async #a() { }",
+    "async *#a() { }",
+
+    "#a() { } #b() {}",
+    "get #a() { } set #a(foo) {}",
+    "get #a() { } get #b() {} set #a(foo) {}",
+    "get #a() { } get #b() {} set #a(foo) {} set #b(foo) {}",
+    "set #a(foo) { } set #b(foo) {}",
+    "get #a() { } get #b() {}",
+
+    "#a() { } static a() {}",
+    "#a() { } a() {}",
+    "#a() { } a() {} static a() {}",
+    "get #a() { } get a() {} static get a() {}",
+    "set #a(foo) { } set a(foo) {} static set a(foo) {}",
+
+    "#a() { } get #b() {}",
+    "#a() { } async #b() {}",
+    "#a() { } async *#b() {}",
+
+    // With arguments
+    "#a(...args) { }",
+    "#a(a = 1) { }",
+    "get #a() { }",
+    "set #a(a = (...args) => {}) { }",
+
+    // Misc edge cases
+    "#get() {}",
+    "#set() {}",
+    "#yield() {}",
+    "#await() {}",
+    "#async() {}",
+    "#static() {}",
+    "#arguments() {}",
+    "get #yield() {}",
+    "get #await() {}",
+    "get #async() {}",
+    "get #get() {}",
+    "get #static() {}",
+    "get #arguments() {}",
+    "set #yield(test) {}",
+    "set #async(test) {}",
+    "set #await(test) {}",
+    "set #set(test) {}",
+    "set #static(test) {}",
+    "set #arguments(test) {}",
+    "async #yield() {}",
+    "async #async() {}",
+    "async #await() {}",
+    "async #get() {}",
+    "async #set() {}",
+    "async #static() {}",
+    "async #arguments() {}",
+    "*#async() {}",
+    "*#await() {}",
+    "*#yield() {}",
+    "*#get() {}",
+    "*#set() {}",
+    "*#static() {}",
+    "*#arguments() {}",
+    "async *#yield() {}",
+    "async *#async() {}",
+    "async *#await() {}",
+    "async *#get() {}",
+    "async *#set() {}",
+    "async *#static() {}",
+    "async *#arguments() {}",
+    nullptr
+  };
+  // clang-format on
+
+  RunParserSyncTest(context_data, class_body_data, kError);
+
+  static const ParserFlag private_methods[] = {kAllowHarmonyPrivateFields,
+                                               kAllowHarmonyPrivateMethods};
+  RunParserSyncTest(context_data, class_body_data, kSuccess, nullptr, 0,
+                    private_methods, arraysize(private_methods));
+}
+
+TEST(PrivateMethodsAndFieldsNoErrors) {
+  // clang-format off
+  // Tests proposed class methods syntax in combination with fields
+  const char* context_data[][2] = {{"(class {", "});"},
+                                   {"(class extends Base {", "});"},
+                                   {"class C {", "}"},
+                                   {"class C extends Base {", "}"},
+                                   {nullptr, nullptr}};
+  const char* class_body_data[] = {
+    // Basic syntax
+    "#b;#a() { }",
+    "#b;get #a() { }",
+    "#b;set #a(foo) { }",
+    "#b;*#a() { }",
+    "#b;async #a() { }",
+    "#b;async *#a() { }",
+    "#b = 1;#a() { }",
+    "#b = 1;get #a() { }",
+    "#b = 1;set #a(foo) { }",
+    "#b = 1;*#a() { }",
+    "#b = 1;async #a() { }",
+    "#b = 1;async *#a() { }",
+
+    // With public fields
+    "a;#a() { }",
+    "a;get #a() { }",
+    "a;set #a(foo) { }",
+    "a;*#a() { }",
+    "a;async #a() { }",
+    "a;async *#a() { }",
+    "a = 1;#a() { }",
+    "a = 1;get #a() { }",
+    "a = 1;set #a(foo) { }",
+    "a = 1;*#a() { }",
+    "a = 1;async #a() { }",
+    "a = 1;async *#a() { }",
+
+    // ASI
+    "#a = 0\n #b(){}",
+    "#a\n *#b(){}",
+    "#a = 0\n get #b(){}",
+    "#a\n *#b(){}",
+
+    "b = 0\n #b(){}",
+    "b\n *#b(){}",
+    "b = 0\n get #b(){}",
+    "b\n *#b(){}",
+    nullptr
+  };
+  // clang-format on
+
+  RunParserSyncTest(context_data, class_body_data, kError);
+
+  static const ParserFlag private_methods_and_fields[] = {
+      kAllowHarmonyPrivateFields, kAllowHarmonyPublicFields,
+      kAllowHarmonyPrivateMethods};
+  RunParserSyncTest(context_data, class_body_data, kSuccess, nullptr, 0,
+                    private_methods_and_fields,
+                    arraysize(private_methods_and_fields));
+}
+
+TEST(PrivateMethodsErrors) {
+  // clang-format off
+  // Tests proposed class methods syntax in combination with fields
+  const char* context_data[][2] = {{"(class {", "});"},
+                                   {"(class extends Base {", "});"},
+                                   {"class C {", "}"},
+                                   {"class C extends Base {", "}"},
+                                   {nullptr, nullptr}};
+  const char* class_body_data[] = {
+    "#a() : 0",
+    "#a() =",
+    "#a() => {}",
+    "#a => {}",
+    "*#a() = 0",
+    "*#a() => 0",
+    "*#a() => {}",
+    "get #a()[]",
+    "yield #a()[]",
+    "yield #a => {}",
+    "async #a() = 0",
+    "async #a => {}",
+    "#a(arguments) {}",
+    "set #a(arguments) {}",
+
+    "#['a']() { }",
+    "get #['a']() { }",
+    "set #['a'](foo) { }",
+    "*#['a']() { }",
+    "async #['a']() { }",
+    "async *#['a]() { }",
+
+    // TODO(joyee): check duplicate accessors
+
+    "#a\n#",
+    "#a() c",
+    "#a() #",
+    "#a(arg) c",
+    "#a(arg) #",
+    "#a(arg) #c",
+    "#a#",
+    "#a#b",
+    "#a#b(){}",
+    "#[test](){}",
+
+    "async *#constructor() {}",
+    "*#constructor() {}",
+    "async #constructor() {}",
+    "set #constructor(test) {}",
+    "#constructor() {}",
+    "get #constructor() {}",
+    nullptr
+  };
+  // clang-format on
+
+  RunParserSyncTest(context_data, class_body_data, kError);
+
+  static const ParserFlag private_methods[] = {kAllowHarmonyPrivateFields,
+                                               kAllowHarmonyPrivateMethods};
+  RunParserSyncTest(context_data, class_body_data, kError, nullptr, 0,
+                    private_methods, arraysize(private_methods));
+}
+
+// Test that private members do not parse outside class bodies
+TEST(PrivateMembersInNonClassNoErrors) {
+  // clang-format off
+  const char* context_data[][2] = {{"", ""},
+                                   {"({", "})"},
+                                   {"'use strict'; ({", "});"},
+                                   {"function() {", "}"},
+                                   {"() => {", "}"},
+                                   {"class C { test() {", "} }"},
+                                   {nullptr, nullptr}};
+  const char* class_body_data[] = {
+    "#a = 1",
+    "#a = () => {}",
+    "#a",
+    "#a() { }",
+    "get #a() { }",
+    "set #a(foo) { }",
+    "*#a() { }",
+    "async #a() { }",
+    "async *#a() { }",
+    nullptr
+  };
+  // clang-format on
+
+  RunParserSyncTest(context_data, class_body_data, kError);
+
+  static const ParserFlag private_methods[] = {kAllowHarmonyPrivateFields,
+                                               kAllowHarmonyPrivateMethods};
+  RunParserSyncTest(context_data, class_body_data, kError, nullptr, 0,
+                    private_methods, arraysize(private_methods));
 }
 
 TEST(PrivateClassFieldsNoErrors) {
@@ -4896,6 +5509,8 @@ TEST(StaticClassFieldsErrors) {
     "static a b",
     "static a = 0 b",
 
+    "static c = [1] = [c]",
+
     // ASI requires that the next token is not part of any legal production
     "static a = 0\n *b(){}",
     "static a = 0\n ['b'](){}",
@@ -4943,6 +5558,8 @@ TEST(ClassFieldsErrors) {
     // ASI requires a linebreak
     "a b",
     "a = 0 b",
+
+    "c = [1] = [c]",
 
     // ASI requires that the next token is not part of any legal production
     "a = 0\n *b(){}",
@@ -5079,16 +5696,18 @@ TEST(PrivateStaticClassFieldsErrors) {
     "static #'a';",
 
     "static # a = 0",
+    "static #get a() { }",
+    "static #set a() { }",
+    "static #*a() { }",
+    "static async #*a() { }",
+
+    // TODO(joyee): support static private methods
     "static #a() { }",
     "static get #a() { }",
-    "static #get a() { }",
     "static set #a() { }",
-    "static #set a() { }",
     "static *#a() { }",
-    "static #*a() { }",
     "static async #a() { }",
     "static async *#a() { }",
-    "static async #*a() { }",
 
     // ASI
     "static #a = 0\n",
@@ -6252,6 +6871,41 @@ TEST(BasicImportExportParsing) {
   }
 }
 
+TEST(NamespaceExportParsing) {
+  // clang-format off
+  const char* kSources[] = {
+      "export * as arguments from 'bar'",
+      "export * as await from 'bar'",
+      "export * as default from 'bar'",
+      "export * as enum from 'bar'",
+      "export * as foo from 'bar'",
+      "export * as for from 'bar'",
+      "export * as let from 'bar'",
+      "export * as static from 'bar'",
+      "export * as yield from 'bar'",
+  };
+  // clang-format on
+
+  i::FLAG_harmony_namespace_exports = true;
+  i::Isolate* isolate = CcTest::i_isolate();
+  i::Factory* factory = isolate->factory();
+
+  v8::HandleScope handles(CcTest::isolate());
+  v8::Local<v8::Context> context = v8::Context::New(CcTest::isolate());
+  v8::Context::Scope context_scope(context);
+
+  isolate->stack_guard()->SetStackLimit(i::GetCurrentStackPosition() -
+                                        128 * 1024);
+
+  for (unsigned i = 0; i < arraysize(kSources); ++i) {
+    i::Handle<i::String> source =
+        factory->NewStringFromAsciiChecked(kSources[i]);
+    i::Handle<i::Script> script = factory->NewScript(source);
+    i::ParseInfo info(isolate, script);
+    info.set_module();
+    CHECK(i::parsing::ParseProgram(&info, isolate));
+  }
+}
 
 TEST(ImportExportParsingErrors) {
   // clang-format off
@@ -6317,6 +6971,13 @@ TEST(ImportExportParsingErrors) {
       "import * as x, * as y from 'm.js';",
       "import {x}, {y} from 'm.js';",
       "import * as x, {y} from 'm.js';",
+
+      "export *;",
+      "export * as;",
+      "export * as foo;",
+      "export * as foo from;",
+      "export * as foo from ';",
+      "export * as ,foo from 'bar'",
   };
   // clang-format on
 
@@ -9338,7 +9999,6 @@ TEST(ArgumentsRedeclaration) {
 // Test that lazily parsed inner functions don't result in overly pessimistic
 // context allocations.
 TEST(NoPessimisticContextAllocation) {
-  i::FLAG_lazy_inner_functions = true;
   i::Isolate* isolate = CcTest::i_isolate();
   i::Factory* factory = isolate->factory();
   i::HandleScope scope(isolate);
@@ -9619,7 +10279,7 @@ TEST(NoPessimisticContextAllocation) {
       DCHECK(scope->is_function_scope());
       const i::AstRawString* var_name =
           info.ast_value_factory()->GetOneByteString("my_var");
-      i::Variable* var = scope->Lookup(var_name);
+      i::Variable* var = scope->LookupForTesting(var_name);
       CHECK_EQ(inners[i].ctxt_allocate,
                i::ScopeTestHelper::MustAllocateInContext(var));
     }

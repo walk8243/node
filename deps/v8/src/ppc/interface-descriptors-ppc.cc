@@ -5,6 +5,7 @@
 #if V8_TARGET_ARCH_PPC
 
 #include "src/interface-descriptors.h"
+#include "src/macro-assembler.h"
 
 namespace v8 {
 namespace internal {
@@ -88,9 +89,9 @@ void CallVarargsDescriptor::InitializePlatformSpecific(
     CallInterfaceDescriptorData* data) {
   // r3 : number of arguments (on the stack, not including receiver)
   // r4 : the target to call
-  // r5 : arguments list (FixedArray)
   // r7 : arguments list length (untagged)
-  Register registers[] = {r4, r3, r5, r7};
+  // r5 : arguments list (FixedArray)
+  Register registers[] = {r4, r3, r7, r5};
   data->InitializePlatformSpecific(arraysize(registers), registers);
 }
 
@@ -125,9 +126,9 @@ void ConstructVarargsDescriptor::InitializePlatformSpecific(
   // r3 : number of arguments (on the stack, not including receiver)
   // r4 : the target to call
   // r6 : the new target
-  // r5 : arguments list (FixedArray)
   // r7 : arguments list length (untagged)
-  Register registers[] = {r4, r6, r3, r5, r7};
+  // r5 : arguments list (FixedArray)
+  Register registers[] = {r4, r6, r3, r7, r5};
   data->InitializePlatformSpecific(arraysize(registers), registers);
 }
 
@@ -194,7 +195,7 @@ void BinaryOpDescriptor::InitializePlatformSpecific(
   data->InitializePlatformSpecific(arraysize(registers), registers);
 }
 
-void ArgumentAdaptorDescriptor::InitializePlatformSpecific(
+void ArgumentsAdaptorDescriptor::InitializePlatformSpecific(
     CallInterfaceDescriptorData* data) {
   Register registers[] = {
       r4,  // JSFunction
@@ -238,10 +239,10 @@ void InterpreterPushArgsThenConstructDescriptor::InitializePlatformSpecific(
     CallInterfaceDescriptorData* data) {
   Register registers[] = {
       r3,  // argument count (not including receiver)
-      r6,  // new target
+      r7,  // address of the first argument
       r4,  // constructor to call
+      r6,  // new target
       r5,  // allocation site feedback if available, undefined otherwise
-      r7   // address of the first argument
   };
   data->InitializePlatformSpecific(arraysize(registers), registers);
 }

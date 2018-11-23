@@ -21,6 +21,7 @@
 
 #include "src/double.h"
 #include "src/objects-inl.h"
+#include "src/objects/smi.h"
 
 namespace v8 {
 namespace internal {
@@ -36,9 +37,6 @@ namespace internal {
 class MutableBigInt : public FreshlyAllocatedBigInt,
                       public NeverReadOnlySpaceObject {
  public:
-  using NeverReadOnlySpaceObject::GetHeap;
-  using NeverReadOnlySpaceObject::GetIsolate;
-
   // Bottleneck for converting MutableBigInts to BigInts.
   static MaybeHandle<BigInt> MakeImmutable(MaybeHandle<MutableBigInt> maybe);
   static Handle<BigInt> MakeImmutable(Handle<MutableBigInt> result);
@@ -96,7 +94,8 @@ class MutableBigInt : public FreshlyAllocatedBigInt,
   static inline Handle<MutableBigInt> AbsoluteBitwiseOp(
       Isolate* isolate, Handle<BigIntBase> x, Handle<BigIntBase> y,
       MutableBigInt* result_storage, ExtraDigitsHandling extra_digits,
-      SymmetricOp symmetric, std::function<digit_t(digit_t, digit_t)> op);
+      SymmetricOp symmetric,
+      const std::function<digit_t(digit_t, digit_t)>& op);
   static Handle<MutableBigInt> AbsoluteAnd(
       Isolate* isolate, Handle<BigIntBase> x, Handle<BigIntBase> y,
       MutableBigInt* result_storage = nullptr);
@@ -155,9 +154,11 @@ class MutableBigInt : public FreshlyAllocatedBigInt,
 
   static MaybeHandle<String> ToStringBasePowerOfTwo(Isolate* isolate,
                                                     Handle<BigIntBase> x,
-                                                    int radix);
+                                                    int radix,
+                                                    ShouldThrow should_throw);
   static MaybeHandle<String> ToStringGeneric(Isolate* isolate,
-                                             Handle<BigIntBase> x, int radix);
+                                             Handle<BigIntBase> x, int radix,
+                                             ShouldThrow should_throw);
 
   static double ToDouble(Handle<BigIntBase> x);
   enum Rounding { kRoundDown, kTie, kRoundUp };
@@ -182,14 +183,14 @@ class MutableBigInt : public FreshlyAllocatedBigInt,
 // Internal field setters. Non-mutable BigInts don't have these.
 #include "src/objects/object-macros.h"
   inline void set_sign(bool new_sign) {
-    intptr_t bitfield = READ_INTPTR_FIELD(this, kBitfieldOffset);
+    intptr_t bitfield = RELAXED_READ_INTPTR_FIELD(this, kBitfieldOffset);
     bitfield = SignBits::update(static_cast<uint32_t>(bitfield), new_sign);
-    WRITE_INTPTR_FIELD(this, kBitfieldOffset, bitfield);
+    RELAXED_WRITE_INTPTR_FIELD(this, kBitfieldOffset, bitfield);
   }
-  inline void set_length(int new_length) {
-    intptr_t bitfield = READ_INTPTR_FIELD(this, kBitfieldOffset);
+  inline void synchronized_set_length(int new_length) {
+    intptr_t bitfield = RELAXED_READ_INTPTR_FIELD(this, kBitfieldOffset);
     bitfield = LengthBits::update(static_cast<uint32_t>(bitfield), new_length);
-    WRITE_INTPTR_FIELD(this, kBitfieldOffset, bitfield);
+    RELEASE_WRITE_INTPTR_FIELD(this, kBitfieldOffset, bitfield);
   }
   inline void initialize_bitfield(bool sign, int length) {
     intptr_t bitfield = LengthBits::encode(length) | SignBits::encode(sign);
@@ -339,8 +340,13 @@ Handle<BigInt> MutableBigInt::MakeImmutable(Handle<MutableBigInt> result) {
     int size_delta = to_trim * kDigitSize;
     Address new_end = result->address() + BigInt::SizeFor(new_length);
     Heap* heap = result->GetHeap();
-    heap->CreateFillerObjectAt(new_end, size_delta, ClearRecordedSlots::kNo);
-    result->set_length(new_length);
+    if (!heap->IsLargeObject(*result)) {
+      // We do not create a filler for objects in large object space.
+      // TODO(hpayer): We should shrink the large object page if the size
+      // of the object changed significantly.
+      heap->CreateFillerObjectAt(new_end, size_delta, ClearRecordedSlots::kNo);
+    }
+    result->synchronized_set_length(new_length);
 
     // Canonicalize -0n.
     if (new_length == 0) {
@@ -350,7 +356,7 @@ Handle<BigInt> MutableBigInt::MakeImmutable(Handle<MutableBigInt> result) {
   }
   DCHECK_IMPLIES(result->length() > 0,
                  result->digit(result->length() - 1) != 0);  // MSD is non-zero.
-  return Handle<BigInt>(reinterpret_cast<BigInt**>(result.location()));
+  return Handle<BigInt>(result.location());
 }
 
 Handle<BigInt> BigInt::Zero(Isolate* isolate) {
@@ -924,14 +930,15 @@ ComparisonResult BigInt::CompareToDouble(Handle<BigInt> x, double y) {
 }
 
 MaybeHandle<String> BigInt::ToString(Isolate* isolate, Handle<BigInt> bigint,
-                                     int radix) {
+                                     int radix, ShouldThrow should_throw) {
   if (bigint->is_zero()) {
     return isolate->factory()->NewStringFromStaticChars("0");
   }
   if (base::bits::IsPowerOfTwo(radix)) {
-    return MutableBigInt::ToStringBasePowerOfTwo(isolate, bigint, radix);
+    return MutableBigInt::ToStringBasePowerOfTwo(isolate, bigint, radix,
+                                                 should_throw);
   }
-  return MutableBigInt::ToStringGeneric(isolate, bigint, radix);
+  return MutableBigInt::ToStringGeneric(isolate, bigint, radix, should_throw);
 }
 
 MaybeHandle<BigInt> BigInt::FromNumber(Isolate* isolate,
@@ -979,7 +986,7 @@ MaybeHandle<BigInt> BigInt::FromObject(Isolate* isolate, Handle<Object> obj) {
 }
 
 Handle<Object> BigInt::ToNumber(Isolate* isolate, Handle<BigInt> x) {
-  if (x->is_zero()) return Handle<Smi>(Smi::kZero, isolate);
+  if (x->is_zero()) return Handle<Smi>(Smi::zero(), isolate);
   if (x->length() == 1 && x->digit(0) < Smi::kMaxValue) {
     int value = static_cast<int>(x->digit(0));
     if (x->sign()) value = -value;
@@ -1255,7 +1262,7 @@ MaybeHandle<MutableBigInt> MutableBigInt::AbsoluteSubOne(Isolate* isolate,
 inline Handle<MutableBigInt> MutableBigInt::AbsoluteBitwiseOp(
     Isolate* isolate, Handle<BigIntBase> x, Handle<BigIntBase> y,
     MutableBigInt* result_storage, ExtraDigitsHandling extra_digits,
-    SymmetricOp symmetric, std::function<digit_t(digit_t, digit_t)> op) {
+    SymmetricOp symmetric, const std::function<digit_t(digit_t, digit_t)>& op) {
   int x_length = x->length();
   int y_length = y->length();
   int num_pairs = y_length;
@@ -1924,9 +1931,9 @@ MaybeHandle<BigInt> BigInt::FromSerializedDigits(
 
 static const char kConversionChars[] = "0123456789abcdefghijklmnopqrstuvwxyz";
 
-MaybeHandle<String> MutableBigInt::ToStringBasePowerOfTwo(Isolate* isolate,
-                                                          Handle<BigIntBase> x,
-                                                          int radix) {
+MaybeHandle<String> MutableBigInt::ToStringBasePowerOfTwo(
+    Isolate* isolate, Handle<BigIntBase> x, int radix,
+    ShouldThrow should_throw) {
   STATIC_ASSERT(base::bits::IsPowerOfTwo(kDigitBits));
   DCHECK(base::bits::IsPowerOfTwo(radix));
   DCHECK(radix >= 2 && radix <= 32);
@@ -1945,7 +1952,11 @@ MaybeHandle<String> MutableBigInt::ToStringBasePowerOfTwo(Isolate* isolate,
       (bit_length + bits_per_char - 1) / bits_per_char + sign;
 
   if (chars_required > String::kMaxLength) {
-    THROW_NEW_ERROR(isolate, NewInvalidStringLengthError(), String);
+    if (should_throw == kThrowOnError) {
+      THROW_NEW_ERROR(isolate, NewInvalidStringLengthError(), String);
+    } else {
+      return MaybeHandle<String>();
+    }
   }
 
   Handle<SeqOneByteString> result =
@@ -1988,7 +1999,8 @@ MaybeHandle<String> MutableBigInt::ToStringBasePowerOfTwo(Isolate* isolate,
 
 MaybeHandle<String> MutableBigInt::ToStringGeneric(Isolate* isolate,
                                                    Handle<BigIntBase> x,
-                                                   int radix) {
+                                                   int radix,
+                                                   ShouldThrow should_throw) {
   DCHECK(radix >= 2 && radix <= 36);
   DCHECK(!x->is_zero());
   Heap* heap = isolate->heap();
@@ -2014,7 +2026,11 @@ MaybeHandle<String> MutableBigInt::ToStringGeneric(Isolate* isolate,
   chars_required += sign;
 
   if (chars_required > String::kMaxLength) {
-    THROW_NEW_ERROR(isolate, NewInvalidStringLengthError(), String);
+    if (should_throw == kThrowOnError) {
+      THROW_NEW_ERROR(isolate, NewInvalidStringLengthError(), String);
+    } else {
+      return MaybeHandle<String>();
+    }
   }
   Handle<SeqOneByteString> result =
       isolate->factory()
@@ -2144,6 +2160,8 @@ Handle<BigInt> BigInt::AsIntN(Isolate* isolate, uint64_t n, Handle<BigInt> x) {
                                                            false);
       }
     }
+    // Truncation is no-op if x == -2^(n-1).
+    if (x_length == needed_length && top_digit == compare_digit) return x;
     return MutableBigInt::TruncateToNBits(isolate, N, x);
   }
   return MutableBigInt::TruncateAndSubFromPowerOfTwo(isolate, N, x, false);

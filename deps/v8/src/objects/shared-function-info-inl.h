@@ -12,6 +12,7 @@
 #include "src/objects/debug-objects-inl.h"
 #include "src/objects/scope-info.h"
 #include "src/objects/templates.h"
+#include "src/wasm/wasm-objects-inl.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
@@ -26,7 +27,7 @@ INT_ACCESSORS(PreParsedScopeData, length, kLengthOffset)
 Object* PreParsedScopeData::child_data(int index) const {
   DCHECK_GE(index, 0);
   DCHECK_LT(index, this->length());
-  int offset = kChildDataStartOffset + index * kPointerSize;
+  int offset = kChildDataStartOffset + index * kTaggedSize;
   return RELAXED_READ_FIELD(this, offset);
 }
 
@@ -34,21 +35,20 @@ void PreParsedScopeData::set_child_data(int index, Object* value,
                                         WriteBarrierMode mode) {
   DCHECK_GE(index, 0);
   DCHECK_LT(index, this->length());
-  int offset = kChildDataStartOffset + index * kPointerSize;
+  int offset = kChildDataStartOffset + index * kTaggedSize;
   RELAXED_WRITE_FIELD(this, offset, value);
   CONDITIONAL_WRITE_BARRIER(this, offset, value, mode);
 }
 
-Object** PreParsedScopeData::child_data_start() const {
+ObjectSlot PreParsedScopeData::child_data_start() const {
   return HeapObject::RawField(this, kChildDataStartOffset);
 }
 
 void PreParsedScopeData::clear_padding() {
-  // For archs where kIntSize < kPointerSize, there will be padding between the
-  // length field and the start of the child data.
-  if (kUnalignedChildDataStartOffset < kChildDataStartOffset) {
-    memset(reinterpret_cast<void*>(address() + kUnalignedChildDataStartOffset),
-           0, kChildDataStartOffset - kUnalignedChildDataStartOffset);
+  if (FIELD_SIZE(kOptionalPaddingOffset)) {
+    DCHECK_EQ(4, FIELD_SIZE(kOptionalPaddingOffset));
+    memset(reinterpret_cast<void*>(address() + kOptionalPaddingOffset), 0,
+           FIELD_SIZE(kOptionalPaddingOffset));
   }
 }
 
@@ -59,11 +59,10 @@ INT32_ACCESSORS(UncompiledData, end_position, kEndPositionOffset)
 INT32_ACCESSORS(UncompiledData, function_literal_id, kFunctionLiteralIdOffset)
 
 void UncompiledData::clear_padding() {
-  // For archs where kIntSize < kPointerSize, there will be padding at the end
-  // of the data.
-  if (kUnalignedSize < kSize) {
-    memset(reinterpret_cast<void*>(address() + kUnalignedSize), 0,
-           kSize - kUnalignedSize);
+  if (FIELD_SIZE(kOptionalPaddingOffset)) {
+    DCHECK_EQ(4, FIELD_SIZE(kOptionalPaddingOffset));
+    memset(reinterpret_cast<void*>(address() + kOptionalPaddingOffset), 0,
+           FIELD_SIZE(kOptionalPaddingOffset));
   }
 }
 
@@ -75,8 +74,8 @@ ACCESSORS(UncompiledDataWithPreParsedScope, pre_parsed_scope_data,
 
 CAST_ACCESSOR(InterpreterData)
 ACCESSORS(InterpreterData, bytecode_array, BytecodeArray, kBytecodeArrayOffset)
-ACCESSORS(InterpreterData, interpreter_trampoline, Code,
-          kInterpreterTrampolineOffset)
+ACCESSORS2(InterpreterData, interpreter_trampoline, Code,
+           kInterpreterTrampolineOffset)
 
 CAST_ACCESSOR(SharedFunctionInfo)
 DEFINE_DEOPT_ELEMENT_ACCESSORS(SharedFunctionInfo, Object)
@@ -163,8 +162,8 @@ BIT_FIELD_ACCESSORS(SharedFunctionInfo, flags, native,
 BIT_FIELD_ACCESSORS(SharedFunctionInfo, flags, is_asm_wasm_broken,
                     SharedFunctionInfo::IsAsmWasmBrokenBit)
 BIT_FIELD_ACCESSORS(SharedFunctionInfo, flags,
-                    requires_instance_fields_initializer,
-                    SharedFunctionInfo::RequiresInstanceFieldsInitializer)
+                    requires_instance_members_initializer,
+                    SharedFunctionInfo::RequiresInstanceMembersInitializer)
 
 BIT_FIELD_ACCESSORS(SharedFunctionInfo, flags, name_should_print_as_anonymous,
                     SharedFunctionInfo::NameShouldPrintAsAnonymousBit)
@@ -280,60 +279,6 @@ void SharedFunctionInfo::DontAdaptArguments() {
   // TODO(leszeks): Revise this DCHECK now that the code field is gone.
   DCHECK(!HasWasmExportedFunctionData());
   set_internal_formal_parameter_count(kDontAdaptArgumentsSentinel);
-}
-
-int SharedFunctionInfo::StartPosition() const {
-  Object* maybe_scope_info = name_or_scope_info();
-  if (maybe_scope_info->IsScopeInfo()) {
-    ScopeInfo* info = ScopeInfo::cast(maybe_scope_info);
-    if (info->HasPositionInfo()) {
-      return info->StartPosition();
-    }
-  } else if (HasUncompiledData()) {
-    // Works with or without scope.
-    return uncompiled_data()->start_position();
-  } else if (IsApiFunction() || HasBuiltinId()) {
-    DCHECK_IMPLIES(HasBuiltinId(), builtin_id() != Builtins::kCompileLazy);
-    return 0;
-  }
-  return kNoSourcePosition;
-}
-
-int SharedFunctionInfo::EndPosition() const {
-  Object* maybe_scope_info = name_or_scope_info();
-  if (maybe_scope_info->IsScopeInfo()) {
-    ScopeInfo* info = ScopeInfo::cast(maybe_scope_info);
-    if (info->HasPositionInfo()) {
-      return info->EndPosition();
-    }
-  } else if (HasUncompiledData()) {
-    // Works with or without scope.
-    return uncompiled_data()->end_position();
-  } else if (IsApiFunction() || HasBuiltinId()) {
-    DCHECK_IMPLIES(HasBuiltinId(), builtin_id() != Builtins::kCompileLazy);
-    return 0;
-  }
-  return kNoSourcePosition;
-}
-
-void SharedFunctionInfo::SetPosition(int start_position, int end_position) {
-  Object* maybe_scope_info = name_or_scope_info();
-  if (maybe_scope_info->IsScopeInfo()) {
-    ScopeInfo* info = ScopeInfo::cast(maybe_scope_info);
-    if (info->HasPositionInfo()) {
-      info->SetPositionInfo(start_position, end_position);
-    }
-  } else if (HasUncompiledData()) {
-    if (HasUncompiledDataWithPreParsedScope()) {
-      // Clear out preparsed scope data, since the position setter invalidates
-      // any scope data.
-      ClearPreParsedScopeData();
-    }
-    uncompiled_data()->set_start_position(start_position);
-    uncompiled_data()->set_end_position(end_position);
-  } else {
-    UNREACHABLE();
-  }
 }
 
 bool SharedFunctionInfo::IsInterpreted() const { return HasBytecodeArray(); }
@@ -489,7 +434,7 @@ void SharedFunctionInfo::set_bytecode_array(BytecodeArray* bytecode) {
   set_function_data(bytecode);
 }
 
-Code* SharedFunctionInfo::InterpreterTrampoline() const {
+Code SharedFunctionInfo::InterpreterTrampoline() const {
   DCHECK(HasInterpreterData());
   return interpreter_data()->interpreter_trampoline();
 }
@@ -510,15 +455,15 @@ void SharedFunctionInfo::set_interpreter_data(
 }
 
 bool SharedFunctionInfo::HasAsmWasmData() const {
-  return function_data()->IsFixedArray();
+  return function_data()->IsAsmWasmData();
 }
 
-FixedArray* SharedFunctionInfo::asm_wasm_data() const {
+AsmWasmData* SharedFunctionInfo::asm_wasm_data() const {
   DCHECK(HasAsmWasmData());
-  return FixedArray::cast(function_data());
+  return AsmWasmData::cast(function_data());
 }
 
-void SharedFunctionInfo::set_asm_wasm_data(FixedArray* data) {
+void SharedFunctionInfo::set_asm_wasm_data(AsmWasmData* data) {
   DCHECK(function_data() == Smi::FromEnum(Builtins::kCompileLazy) ||
          HasUncompiledData() || HasAsmWasmData());
   set_function_data(data);
@@ -537,7 +482,6 @@ int SharedFunctionInfo::builtin_id() const {
 
 void SharedFunctionInfo::set_builtin_id(int builtin_id) {
   DCHECK(Builtins::IsBuiltinId(builtin_id));
-  DCHECK_NE(builtin_id, Builtins::kDeserializeLazy);
   set_function_data(Smi::FromInt(builtin_id), SKIP_WRITE_BARRIER);
 }
 
@@ -611,21 +555,6 @@ void SharedFunctionInfo::ClearPreParsedScopeData() {
 
 bool SharedFunctionInfo::HasWasmExportedFunctionData() const {
   return function_data()->IsWasmExportedFunctionData();
-}
-
-int SharedFunctionInfo::FunctionLiteralId(Isolate* isolate) const {
-  // Fast path for the common case when the SFI is uncompiled and so the
-  // function literal id is already in the uncompiled data.
-  if (HasUncompiledData()) {
-    int id = uncompiled_data()->function_literal_id();
-    // Make sure the id is what we should have found with the slow path.
-    DCHECK_EQ(id, FindIndexInScript(isolate));
-    return id;
-  }
-
-  // Otherwise, search for the function in the SFI's script's function list,
-  // and return its index in that list.e
-  return FindIndexInScript(isolate);
 }
 
 Object* SharedFunctionInfo::script() const {

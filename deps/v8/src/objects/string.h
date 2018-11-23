@@ -7,6 +7,7 @@
 
 #include "src/base/bits.h"
 #include "src/objects/name.h"
+#include "src/objects/smi.h"
 #include "src/unicode-decoder.h"
 
 // Has to be the last include (doesn't have include guards):
@@ -31,10 +32,10 @@ enum RobustnessFlag { ROBUST_STRING_TRAVERSAL, FAST_STRING_TRAVERSAL };
 // shortcutting.  Keeping these restrictions in mind has proven to be error-
 // prone and so we no longer put StringShapes in variables unless there is a
 // concrete performance benefit at that particular point in the code.
-class StringShape BASE_EMBEDDED {
+class StringShape {
  public:
   inline explicit StringShape(const String* s);
-  inline explicit StringShape(Map* s);
+  inline explicit StringShape(Map s);
   inline explicit StringShape(InstanceType t);
   inline bool IsSequential();
   inline bool IsExternal();
@@ -264,7 +265,7 @@ class String : public Name {
     virtual MaybeHandle<String> GetNamedCapture(Handle<String> name,
                                                 CaptureState* state) = 0;
 
-    virtual ~Match() {}
+    virtual ~Match() = default;
   };
 
   // ES#sec-getsubstitution
@@ -300,11 +301,11 @@ class String : public Name {
   // do any heap allocations.  This is useful when printing stack traces.
   std::unique_ptr<char[]> ToCString(AllowNullsFlag allow_nulls,
                                     RobustnessFlag robustness_flag, int offset,
-                                    int length, int* length_output = 0);
+                                    int length, int* length_output = nullptr);
   std::unique_ptr<char[]> ToCString(
       AllowNullsFlag allow_nulls = DISALLOW_NULLS,
       RobustnessFlag robustness_flag = FAST_STRING_TRAVERSAL,
-      int* length_output = 0);
+      int* length_output = nullptr);
 
   bool ComputeArrayIndex(uint32_t* index);
 
@@ -341,8 +342,8 @@ class String : public Name {
   inline bool IsFlat();
 
   // Layout description.
-  static const int kLengthOffset = Name::kSize;
-  static const int kSize = kLengthOffset + kPointerSize;
+  static const int kLengthOffset = Name::kHeaderSize;
+  static const int kHeaderSize = kLengthOffset + kInt32Size;
 
   // Max char codes.
   static const int32_t kMaxOneByteCharCode = unibrow::Latin1::kMaxChar;
@@ -360,7 +361,7 @@ class String : public Name {
 
   // See include/v8.h for the definition.
   static const int kMaxLength = v8::String::kMaxLength;
-  static_assert(kMaxLength <= (Smi::kMaxValue / 2 - kSize),
+  static_assert(kMaxLength <= (Smi::kMaxValue / 2 - kHeaderSize),
                 "Unexpected max String length");
 
   // Max length for computing hash. For strings longer than this limit the
@@ -369,9 +370,6 @@ class String : public Name {
 
   // Limit for truncation in short printing.
   static const int kMaxShortPrintLength = 1024;
-
-  // Support for regular expressions.
-  const uc16* GetTwoByteData(unsigned start);
 
   // Helper function for flattening strings.
   template <typename sinkchar>
@@ -474,9 +472,6 @@ class SeqString : public String {
  public:
   DECL_CAST(SeqString)
 
-  // Layout description.
-  static const int kHeaderSize = String::kSize;
-
   // Truncate the string in-place if possible and return the result.
   // In case of new_length == 0, the empty string is returned without
   // truncating the original string.
@@ -533,8 +528,6 @@ class SeqOneByteString : public SeqString {
   STATIC_ASSERT((kMaxSize - kHeaderSize) >= String::kMaxLength);
 
   class BodyDescriptor;
-  // No weak fields.
-  typedef BodyDescriptor BodyDescriptorWeak;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(SeqOneByteString);
@@ -559,9 +552,6 @@ class SeqTwoByteString : public SeqString {
   // is deterministic.
   void clear_padding();
 
-  // For regexp code.
-  const uint16_t* SeqTwoByteStringGetData(unsigned start);
-
   DECL_CAST(SeqTwoByteString)
 
   // Garbage collection support.  This method is called by the
@@ -581,8 +571,6 @@ class SeqTwoByteString : public SeqString {
                 String::kMaxLength);
 
   class BodyDescriptor;
-  // No weak fields.
-  typedef BodyDescriptor BodyDescriptorWeak;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(SeqTwoByteString);
@@ -620,17 +608,19 @@ class ConsString : public String {
   DECL_CAST(ConsString)
 
   // Layout description.
-  static const int kFirstOffset = POINTER_SIZE_ALIGN(String::kSize);
-  static const int kSecondOffset = kFirstOffset + kPointerSize;
-  static const int kSize = kSecondOffset + kPointerSize;
+#define CONS_STRING_FIELDS(V)   \
+  V(kFirstOffset, kTaggedSize)  \
+  V(kSecondOffset, kTaggedSize) \
+  /* Total size. */             \
+  V(kSize, 0)
+
+  DEFINE_FIELD_OFFSET_CONSTANTS(String::kHeaderSize, CONS_STRING_FIELDS)
+#undef CONS_STRING_FIELDS
 
   // Minimum length for a cons string.
   static const int kMinLength = 13;
 
-  typedef FixedBodyDescriptor<kFirstOffset, kSecondOffset + kPointerSize, kSize>
-      BodyDescriptor;
-  // No weak fields.
-  typedef BodyDescriptor BodyDescriptorWeak;
+  typedef FixedBodyDescriptor<kFirstOffset, kSize, kSize> BodyDescriptor;
 
   DECL_VERIFIER(ConsString)
 
@@ -659,12 +649,15 @@ class ThinString : public String {
   DECL_VERIFIER(ThinString)
 
   // Layout description.
-  static const int kActualOffset = String::kSize;
-  static const int kSize = kActualOffset + kPointerSize;
+#define THIN_STRING_FIELDS(V)   \
+  V(kActualOffset, kTaggedSize) \
+  /* Total size. */             \
+  V(kSize, 0)
+
+  DEFINE_FIELD_OFFSET_CONSTANTS(String::kHeaderSize, THIN_STRING_FIELDS)
+#undef THIN_STRING_FIELDS
 
   typedef FixedBodyDescriptor<kActualOffset, kSize, kSize> BodyDescriptor;
-  // No weak fields.
-  typedef BodyDescriptor BodyDescriptorWeak;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ThinString);
@@ -696,18 +689,19 @@ class SlicedString : public String {
   DECL_CAST(SlicedString)
 
   // Layout description.
-  static const int kParentOffset = POINTER_SIZE_ALIGN(String::kSize);
-  static const int kOffsetOffset = kParentOffset + kPointerSize;
-  static const int kSize = kOffsetOffset + kPointerSize;
+#define SLICED_STRING_FIELDS(V) \
+  V(kParentOffset, kTaggedSize) \
+  V(kOffsetOffset, kTaggedSize) \
+  /* Total size. */             \
+  V(kSize, 0)
+
+  DEFINE_FIELD_OFFSET_CONSTANTS(String::kHeaderSize, SLICED_STRING_FIELDS)
+#undef SLICED_STRING_FIELDS
 
   // Minimum length for a sliced string.
   static const int kMinLength = 13;
 
-  typedef FixedBodyDescriptor<kParentOffset, kOffsetOffset + kPointerSize,
-                              kSize>
-      BodyDescriptor;
-  // No weak fields.
-  typedef BodyDescriptor BodyDescriptorWeak;
+  typedef FixedBodyDescriptor<kParentOffset, kSize, kSize> BodyDescriptor;
 
   DECL_VERIFIER(SlicedString)
 
@@ -729,13 +723,19 @@ class ExternalString : public String {
   DECL_CAST(ExternalString)
 
   // Layout description.
-  static const int kResourceOffset = POINTER_SIZE_ALIGN(String::kSize);
-  static const int kShortSize = kResourceOffset + kPointerSize;
-  static const int kResourceDataOffset = kResourceOffset + kPointerSize;
-  static const int kSize = kResourceDataOffset + kPointerSize;
+#define EXTERNAL_STRING_FIELDS(V)            \
+  V(kResourceOffset, kSystemPointerSize)     \
+  /* Size of uncached external strings. */   \
+  V(kUncachedSize, 0)                        \
+  V(kResourceDataOffset, kSystemPointerSize) \
+  /* Total size. */                          \
+  V(kSize, 0)
 
-  // Return whether external string is short (data pointer is not cached).
-  inline bool is_short() const;
+  DEFINE_FIELD_OFFSET_CONSTANTS(String::kHeaderSize, EXTERNAL_STRING_FIELDS)
+#undef EXTERNAL_STRING_FIELDS
+
+  // Return whether the external string data pointer is not cached.
+  inline bool is_uncached() const;
   // Size in bytes of the external payload.
   int ExternalPayloadSize() const;
 
@@ -782,8 +782,6 @@ class ExternalOneByteString : public ExternalString {
   DECL_CAST(ExternalOneByteString)
 
   class BodyDescriptor;
-  // No weak fields.
-  typedef BodyDescriptor BodyDescriptorWeak;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(ExternalOneByteString);
@@ -823,8 +821,6 @@ class ExternalTwoByteString : public ExternalString {
   DECL_CAST(ExternalTwoByteString)
 
   class BodyDescriptor;
-  // No weak fields.
-  typedef BodyDescriptor BodyDescriptorWeak;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(ExternalTwoByteString);
@@ -837,14 +833,14 @@ class FlatStringReader : public Relocatable {
  public:
   FlatStringReader(Isolate* isolate, Handle<String> str);
   FlatStringReader(Isolate* isolate, Vector<const char> input);
-  void PostGarbageCollection();
+  void PostGarbageCollection() override;
   inline uc32 Get(int index);
   template <typename Char>
   inline Char Get(int index);
   int length() { return length_; }
 
  private:
-  String** str_;
+  Address* str_;
   bool is_one_byte_;
   int length_;
   const void* start_;
@@ -855,7 +851,7 @@ class FlatStringReader : public Relocatable {
 // traversal of the entire string
 class ConsStringIterator {
  public:
-  inline ConsStringIterator() {}
+  inline ConsStringIterator() = default;
   inline explicit ConsStringIterator(ConsString* cons_string, int offset = 0) {
     Reset(cons_string, offset);
   }

@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {sortUnique, anyToString} from "./util.js"
+import {sortUnique, anyToString} from "../src/util"
 
 function sourcePositionLe(a, b) {
   if (a.inliningId == b.inliningId) {
@@ -76,6 +76,10 @@ export interface Schedule {
   nodes: Array<any>;
 }
 
+export interface Sequence {
+  blocks: Array<any>;
+}
+
 export class SourceResolver {
   nodePositionMap: Array<AnyPosition>;
   sources: Array<Source>;
@@ -90,6 +94,7 @@ export class SourceResolver {
   blockIdToInstructionRange: Array<[number, number]>;
   instructionToPCOffset: Array<number>;
   pcOffsetToInstructions: Map<number, Array<number>>;
+  pcOffsets: Array<number>;
 
 
   constructor() {
@@ -119,6 +124,7 @@ export class SourceResolver {
     this.instructionToPCOffset = [];
     // Maps PC offsets to instructions.
     this.pcOffsetToInstructions = new Map();
+    this.pcOffsets = [];
   }
 
   setSources(sources, mainBackup) {
@@ -298,6 +304,7 @@ export class SourceResolver {
   recordOrigins(phase) {
     if (phase.type != "graph") return;
     for (const node of phase.data.nodes) {
+      phase.highestNodeId = Math.max(phase.highestNodeId, node.id)
       if (node.origin != undefined &&
         node.origin.bytecodePosition != undefined) {
         const position = { bytecodePosition: node.origin.bytecodePosition };
@@ -344,7 +351,7 @@ export class SourceResolver {
       }
       this.pcOffsetToInstructions.get(offset).push(instruction);
     }
-    console.log(this.pcOffsetToInstructions);
+    this.pcOffsets = Array.from(this.pcOffsetToInstructions.keys()).sort((a, b) => b - a);
   }
 
   hasPCOffsets() {
@@ -353,9 +360,8 @@ export class SourceResolver {
 
 
   nodesForPCOffset(offset): [Array<String>, Array<String>] {
-    const keys = Array.from(this.pcOffsetToInstructions.keys()).sort((a, b) => b - a);
-    if (keys.length === 0) return [[],[]];
-    for (const key of keys) {
+    if (this.pcOffsets.length === 0) return [[],[]];
+    for (const key of this.pcOffsets) {
       if (key <= offset) {
         const instrs = this.pcOffsetToInstructions.get(key);
         const nodes = [];
@@ -380,10 +386,14 @@ export class SourceResolver {
 
   parsePhases(phases) {
     for (const [phaseId, phase] of Object.entries<Phase>(phases)) {
+      phase.highestNodeId = 0;
       if (phase.type == 'disassembly') {
         this.disassemblyPhase = phase;
       } else if (phase.type == 'schedule') {
-        this.phases.push(this.parseSchedule(phase))
+        this.phases.push(this.parseSchedule(phase));
+        this.phaseNames.set(phase.name, this.phases.length);
+      } else if (phase.type == 'sequence') {
+        this.phases.push(this.parseSequence(phase));
         this.phaseNames.set(phase.name, this.phases.length);
       } else if (phase.type == 'instructions') {
         if (phase.nodeIdToInstructionRange) {
@@ -523,6 +533,10 @@ export class SourceResolver {
       console.log("Warning: unmatched schedule line \"" + line + "\"");
     }
     phase.schedule = state;
+    return phase;
+  }
+  parseSequence(phase) {
+    phase.sequence = { blocks: phase.blocks };
     return phase;
   }
 }

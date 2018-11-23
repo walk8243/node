@@ -7,6 +7,7 @@
 
 #include "src/objects.h"
 #include "src/objects/fixed-array.h"
+#include "src/objects/js-objects.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
@@ -27,9 +28,6 @@ class Zone;
 // The runtime representation of an ECMAScript module.
 class Module : public Struct, public NeverReadOnlySpaceObject {
  public:
-  using NeverReadOnlySpaceObject::GetHeap;
-  using NeverReadOnlySpaceObject::GetIsolate;
-
   DECL_CAST(Module)
   DECL_VERIFIER(Module)
   DECL_PRINTER(Module)
@@ -49,7 +47,7 @@ class Module : public Struct, public NeverReadOnlySpaceObject {
 
   // The complete export table, mapping an export name to its cell.
   // TODO(neis): We may want to remove the regular exports from the table.
-  DECL_ACCESSORS(exports, ObjectHashTable)
+  DECL_ACCESSORS2(exports, ObjectHashTable)
 
   // Hash for this object (a random non-zero Smi).
   DECL_INT_ACCESSORS(hash)
@@ -110,6 +108,9 @@ class Module : public Struct, public NeverReadOnlySpaceObject {
                                      int cell_index);
   static void StoreVariable(Handle<Module> module, int cell_index,
                             Handle<Object> value);
+
+  static int ImportIndex(int cell_index);
+  static int ExportIndex(int cell_index);
 
   // Get the namespace object for [module_request] of [module].  If it doesn't
   // exist yet, it is created.

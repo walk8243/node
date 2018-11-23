@@ -438,10 +438,23 @@ WASM_SIMD_TEST(F32x4ReplaceLane) {
   CHECK_EQ(1, r.Call(3.14159f, -1.5f));
 }
 
-#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64 || V8_TARGET_ARCH_IA32
+// Runs tests of compiled code, using the interpreter as a reference.
+#define WASM_SIMD_COMPILED_TEST(name)                               \
+  void RunWasm_##name##_Impl(LowerSimd lower_simd,                  \
+                             ExecutionTier execution_tier);         \
+  TEST(RunWasm_##name##_turbofan) {                                 \
+    EXPERIMENTAL_FLAG_SCOPE(simd);                                  \
+    RunWasm_##name##_Impl(kNoLowerSimd, ExecutionTier::kOptimized); \
+  }                                                                 \
+  TEST(RunWasm_##name##_simd_lowered) {                             \
+    EXPERIMENTAL_FLAG_SCOPE(simd);                                  \
+    RunWasm_##name##_Impl(kLowerSimd, ExecutionTier::kOptimized);   \
+  }                                                                 \
+  void RunWasm_##name##_Impl(LowerSimd lower_simd, ExecutionTier execution_tier)
+
 // Tests both signed and unsigned conversion.
-WASM_SIMD_TEST(F32x4ConvertI32x4) {
+// v8:8425 tracks this test being enabled in the interpreter.
+WASM_SIMD_COMPILED_TEST(F32x4ConvertI32x4) {
   WasmRunner<int32_t, int32_t, float, float> r(execution_tier, lower_simd);
   byte a = 0;
   byte expected_signed = 1;
@@ -463,8 +476,6 @@ WASM_SIMD_TEST(F32x4ConvertI32x4) {
                        static_cast<float>(static_cast<uint32_t>(*i))));
   }
 }
-#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64 || V8_TARGET_ARCH_IA32
 
 void RunF32x4UnOpTest(ExecutionTier execution_tier, LowerSimd lower_simd,
                       WasmOpcode simd_op, FloatUnOp expected_op,
@@ -819,9 +830,6 @@ WASM_SIMD_TEST(I8x16ReplaceLane) {
   CHECK_EQ(1, r.Call(1, 2));
 }
 
-#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64 || V8_TARGET_ARCH_IA32
-
 int32_t ConvertToInt(double val, bool unsigned_integer) {
   if (std::isnan(val)) return 0;
   if (unsigned_integer) {
@@ -900,8 +908,6 @@ WASM_SIMD_TEST(I32x4ConvertI16x8) {
     CHECK_EQ(1, r.Call(*i, unpacked_signed, unpacked_unsigned, 0));
   }
 }
-#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64 || V8_TARGET_ARCH_IA32
 
 void RunI32x4UnOpTest(ExecutionTier execution_tier, LowerSimd lower_simd,
                       WasmOpcode simd_op, Int32UnOp expected_op) {
@@ -1080,8 +1086,6 @@ WASM_SIMD_TEST(I32x4ShrU) {
                       LogicalShiftRight);
 }
 
-#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64 || V8_TARGET_ARCH_IA32
 // Tests both signed and unsigned conversion from I8x16 (unpacking).
 WASM_SIMD_TEST(I16x8ConvertI8x16) {
   WasmRunner<int32_t, int32_t, int32_t, int32_t, int32_t> r(execution_tier,
@@ -1124,8 +1128,6 @@ WASM_SIMD_TEST(I16x8ConvertI8x16) {
     CHECK_EQ(1, r.Call(*i, unpacked_signed, unpacked_unsigned, 0));
   }
 }
-#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64 || V8_TARGET_ARCH_IA32
 
 void RunI16x8UnOpTest(ExecutionTier execution_tier, LowerSimd lower_simd,
                       WasmOpcode simd_op, Int16UnOp expected_op) {
@@ -1144,8 +1146,6 @@ WASM_SIMD_TEST(I16x8Neg) {
   RunI16x8UnOpTest(execution_tier, lower_simd, kExprI16x8Neg, Negate);
 }
 
-#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64 || V8_TARGET_ARCH_IA32
 // Tests both signed and unsigned conversion from I32x4 (packing).
 WASM_SIMD_TEST(I16x8ConvertI32x4) {
   WasmRunner<int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t> r(
@@ -1190,8 +1190,6 @@ WASM_SIMD_TEST(I16x8ConvertI32x4) {
     }
   }
 }
-#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64 || V8_TARGET_ARCH_IA32
 
 void RunI16x8BinOpTest(ExecutionTier execution_tier, LowerSimd lower_simd,
                        WasmOpcode simd_op, Int16BinOp expected_op) {
@@ -1374,8 +1372,6 @@ WASM_SIMD_TEST(I8x16Neg) {
   RunI8x16UnOpTest(execution_tier, lower_simd, kExprI8x16Neg, Negate);
 }
 
-#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64 || V8_TARGET_ARCH_IA32
 // Tests both signed and unsigned conversion from I16x8 (packing).
 WASM_SIMD_TEST(I8x16ConvertI16x8) {
   WasmRunner<int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t> r(
@@ -1422,8 +1418,6 @@ WASM_SIMD_TEST(I8x16ConvertI16x8) {
     }
   }
 }
-#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64 || V8_TARGET_ARCH_IA32
 
 void RunI8x16BinOpTest(ExecutionTier execution_tier, LowerSimd lower_simd,
                        WasmOpcode simd_op, Int8BinOp expected_op) {
@@ -1554,13 +1548,9 @@ WASM_SIMD_TEST(I8x16LeU) {
                         UnsignedLessEqual);
 }
 
-#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64 || V8_TARGET_ARCH_IA32
 WASM_SIMD_TEST(I8x16Mul) {
   RunI8x16BinOpTest(execution_tier, lower_simd, kExprI8x16Mul, Mul);
 }
-#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64 || V8_TARGET_ARCH_IA32
 
 void RunI8x16ShiftOpTest(ExecutionTier execution_tier, LowerSimd lower_simd,
                          WasmOpcode simd_op, Int8ShiftOp expected_op) {
@@ -1578,8 +1568,6 @@ void RunI8x16ShiftOpTest(ExecutionTier execution_tier, LowerSimd lower_simd,
   }
 }
 
-#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64 || V8_TARGET_ARCH_IA32
 WASM_SIMD_TEST(I8x16Shl) {
   RunI8x16ShiftOpTest(execution_tier, lower_simd, kExprI8x16Shl,
                       LogicalShiftLeft);
@@ -1594,8 +1582,6 @@ WASM_SIMD_TEST(I8x16ShrU) {
   RunI8x16ShiftOpTest(execution_tier, lower_simd, kExprI8x16ShrU,
                       LogicalShiftRight);
 }
-#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64 || V8_TARGET_ARCH_IA32
 
 // Test Select by making a mask where the 0th and 3rd lanes are true and the
 // rest false, and comparing for non-equality with zero to convert to a boolean
@@ -1951,20 +1937,6 @@ void BuildShuffle(std::vector<Shuffle>& shuffles, std::vector<byte>* buffer) {
   for (size_t j = 0; j < arraysize(epilog); ++j) buffer->push_back(epilog[j]);
 }
 
-// Runs tests of compiled code, using the interpreter as a reference.
-#define WASM_SIMD_COMPILED_TEST(name)                               \
-  void RunWasm_##name##_Impl(LowerSimd lower_simd,                  \
-                             ExecutionTier execution_tier);         \
-  TEST(RunWasm_##name##_turbofan) {                                 \
-    EXPERIMENTAL_FLAG_SCOPE(simd);                                  \
-    RunWasm_##name##_Impl(kNoLowerSimd, ExecutionTier::kOptimized); \
-  }                                                                 \
-  TEST(RunWasm_##name##_simd_lowered) {                             \
-    EXPERIMENTAL_FLAG_SCOPE(simd);                                  \
-    RunWasm_##name##_Impl(kLowerSimd, ExecutionTier::kOptimized);   \
-  }                                                                 \
-  void RunWasm_##name##_Impl(LowerSimd lower_simd, ExecutionTier execution_tier)
-
 void RunWasmCode(ExecutionTier execution_tier, LowerSimd lower_simd,
                  const std::vector<byte>& code,
                  std::array<int8_t, kSimd128Size>* result) {
@@ -2012,6 +1984,8 @@ WASM_SIMD_COMPILED_TEST(S8x16MultiShuffleFuzz) {
     }
   }
 }
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS ||
+        // V8_TARGET_ARCH_MIPS64 || V8_TARGET_ARCH_IA32
 
 // Boolean unary operations are 'AllTrue' and 'AnyTrue', which return an integer
 // result. Use relational ops on numeric vectors to create the boolean vector
@@ -2099,8 +2073,6 @@ WASM_SIMD_TEST(SimdI32x4ExtractWithF32x4) {
                WASM_I32V(1), WASM_I32V(0)));
   CHECK_EQ(1, r.Call());
 }
-#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64 || V8_TARGET_ARCH_IA32
 
 WASM_SIMD_TEST(SimdF32x4ExtractWithI32x4) {
   WasmRunner<int32_t> r(execution_tier, lower_simd);
@@ -2332,7 +2304,7 @@ WASM_SIMD_TEST(SimdF32x4SetGlobal) {
   CHECK_EQ(GetScalar(global, 3), 65.0f);
 }
 
-WASM_SIMD_TEST(SimdLoadStoreLoad) {
+WASM_SIMD_COMPILED_TEST(SimdLoadStoreLoad) {
   WasmRunner<int32_t> r(execution_tier, lower_simd);
   int32_t* memory =
       r.builder().AddMemoryElems<int32_t>(kWasmPageSize / sizeof(int32_t));

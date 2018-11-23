@@ -48,7 +48,12 @@ class AccessorInfo : public Struct {
   DECL_BOOLEAN_ACCESSORS(is_special_data_property)
   DECL_BOOLEAN_ACCESSORS(replace_on_access)
   DECL_BOOLEAN_ACCESSORS(is_sloppy)
-  DECL_BOOLEAN_ACCESSORS(has_no_side_effect)
+
+  inline SideEffectType getter_side_effect_type() const;
+  inline void set_getter_side_effect_type(SideEffectType type);
+
+  inline SideEffectType setter_side_effect_type() const;
+  inline void set_setter_side_effect_type(SideEffectType type);
 
   // The property attributes used when an API object template is instantiated
   // for the first time. Changing of this value afterwards does not affect
@@ -72,14 +77,14 @@ class AccessorInfo : public Struct {
                           Handle<FixedArray> array, int valid_descriptors);
 
 // Layout description.
-#define ACCESSOR_INFO_FIELDS(V)                \
-  V(kNameOffset, kPointerSize)                 \
-  V(kFlagsOffset, kPointerSize)                \
-  V(kExpectedReceiverTypeOffset, kPointerSize) \
-  V(kSetterOffset, kPointerSize)               \
-  V(kGetterOffset, kPointerSize)               \
-  V(kJsGetterOffset, kPointerSize)             \
-  V(kDataOffset, kPointerSize)                 \
+#define ACCESSOR_INFO_FIELDS(V)               \
+  V(kNameOffset, kTaggedSize)                 \
+  V(kFlagsOffset, kTaggedSize)                \
+  V(kExpectedReceiverTypeOffset, kTaggedSize) \
+  V(kSetterOffset, kTaggedSize)               \
+  V(kGetterOffset, kTaggedSize)               \
+  V(kJsGetterOffset, kTaggedSize)             \
+  V(kDataOffset, kTaggedSize)                 \
   V(kSize, 0)
 
   DEFINE_FIELD_OFFSET_CONSTANTS(HeapObject::kHeaderSize, ACCESSOR_INFO_FIELDS)
@@ -89,13 +94,15 @@ class AccessorInfo : public Struct {
   inline bool HasExpectedReceiverType();
 
 // Bit positions in |flags|.
-#define ACCESSOR_INFO_FLAGS_BIT_FIELDS(V, _) \
-  V(AllCanReadBit, bool, 1, _)               \
-  V(AllCanWriteBit, bool, 1, _)              \
-  V(IsSpecialDataPropertyBit, bool, 1, _)    \
-  V(IsSloppyBit, bool, 1, _)                 \
-  V(ReplaceOnAccessBit, bool, 1, _)          \
-  V(HasNoSideEffectBit, bool, 1, _)          \
+#define ACCESSOR_INFO_FLAGS_BIT_FIELDS(V, _)                           \
+  V(AllCanReadBit, bool, 1, _)                                         \
+  V(AllCanWriteBit, bool, 1, _)                                        \
+  V(IsSpecialDataPropertyBit, bool, 1, _)                              \
+  V(IsSloppyBit, bool, 1, _)                                           \
+  V(ReplaceOnAccessBit, bool, 1, _)                                    \
+  V(GetterSideEffectTypeBits, SideEffectType, 2, _)                    \
+  /* We could save a bit from setter side-effect type, if necessary */ \
+  V(SetterSideEffectTypeBits, SideEffectType, 2, _)                    \
   V(InitialAttributesBits, PropertyAttributes, 3, _)
 
   DEFINE_BIT_FIELDS(ACCESSOR_INFO_FLAGS_BIT_FIELDS)
@@ -119,12 +126,17 @@ class AccessCheckInfo : public Struct {
 
   static AccessCheckInfo* Get(Isolate* isolate, Handle<JSObject> receiver);
 
-  static const int kCallbackOffset = HeapObject::kHeaderSize;
-  static const int kNamedInterceptorOffset = kCallbackOffset + kPointerSize;
-  static const int kIndexedInterceptorOffset =
-      kNamedInterceptorOffset + kPointerSize;
-  static const int kDataOffset = kIndexedInterceptorOffset + kPointerSize;
-  static const int kSize = kDataOffset + kPointerSize;
+// Layout description.
+#define ACCESS_CHECK_INFO_FIELDS(V)         \
+  V(kCallbackOffset, kTaggedSize)           \
+  V(kNamedInterceptorOffset, kTaggedSize)   \
+  V(kIndexedInterceptorOffset, kTaggedSize) \
+  V(kDataOffset, kTaggedSize)               \
+  V(kSize, 0)
+
+  DEFINE_FIELD_OFFSET_CONSTANTS(HeapObject::kHeaderSize,
+                                ACCESS_CHECK_INFO_FIELDS)
+#undef ACCESS_CHECK_INFO_FIELDS
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(AccessCheckInfo);
@@ -155,16 +167,22 @@ class InterceptorInfo : public Struct {
   DECL_PRINTER(InterceptorInfo)
   DECL_VERIFIER(InterceptorInfo)
 
-  static const int kGetterOffset = HeapObject::kHeaderSize;
-  static const int kSetterOffset = kGetterOffset + kPointerSize;
-  static const int kQueryOffset = kSetterOffset + kPointerSize;
-  static const int kDescriptorOffset = kQueryOffset + kPointerSize;
-  static const int kDeleterOffset = kDescriptorOffset + kPointerSize;
-  static const int kEnumeratorOffset = kDeleterOffset + kPointerSize;
-  static const int kDefinerOffset = kEnumeratorOffset + kPointerSize;
-  static const int kDataOffset = kDefinerOffset + kPointerSize;
-  static const int kFlagsOffset = kDataOffset + kPointerSize;
-  static const int kSize = kFlagsOffset + kPointerSize;
+// Layout description.
+#define INTERCEPTOR_INFO_FIELDS(V)  \
+  V(kGetterOffset, kTaggedSize)     \
+  V(kSetterOffset, kTaggedSize)     \
+  V(kQueryOffset, kTaggedSize)      \
+  V(kDescriptorOffset, kTaggedSize) \
+  V(kDeleterOffset, kTaggedSize)    \
+  V(kEnumeratorOffset, kTaggedSize) \
+  V(kDefinerOffset, kTaggedSize)    \
+  V(kDataOffset, kTaggedSize)       \
+  V(kFlagsOffset, kTaggedSize)      \
+  V(kSize, 0)
+
+  DEFINE_FIELD_OFFSET_CONSTANTS(HeapObject::kHeaderSize,
+                                INTERCEPTOR_INFO_FIELDS)
+#undef INTERCEPTOR_INFO_FIELDS
 
   static const int kCanInterceptSymbolsBit = 0;
   static const int kAllCanReadBit = 1;

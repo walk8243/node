@@ -163,9 +163,9 @@ void CallOrConstructBuiltinsAssembler::CallOrConstructWithArrayLike(
   BIND(&if_arguments);
   {
     TNode<JSArgumentsObject> js_arguments = CAST(arguments_list);
-    // Try to extract the elements from an JSArgumentsObject.
-    TNode<Object> length =
-        LoadObjectField(js_arguments, JSArgumentsObject::kLengthOffset);
+    // Try to extract the elements from an JSArgumentsObjectWithLength.
+    TNode<Object> length = LoadObjectField(
+        js_arguments, JSArgumentsObjectWithLength::kLengthOffset);
     TNode<FixedArrayBase> elements = LoadElements(js_arguments);
     TNode<Smi> elements_length = LoadFixedArrayBaseLength(elements);
     GotoIfNot(WordEqual(length, elements_length), &if_runtime);
@@ -184,6 +184,8 @@ void CallOrConstructBuiltinsAssembler::CallOrConstructWithArrayLike(
     Goto(&if_done);
   }
 
+  Label too_many_args(this, Label::kDeferred);
+
   // Tail call to the appropriate builtin (depending on whether we have
   // a {new_target} passed).
   BIND(&if_done);
@@ -194,6 +196,8 @@ void CallOrConstructBuiltinsAssembler::CallOrConstructWithArrayLike(
     TNode<Int32T> length = var_length.value();
     {
       Label normalize_done(this);
+      GotoIf(Int32GreaterThan(length, Int32Constant(Code::kMaxArguments)),
+             &too_many_args);
       GotoIfNot(Word32Equal(length, Int32Constant(0)), &normalize_done);
       // Make sure we don't accidentally pass along the
       // empty_fixed_double_array since the tailed-called stubs cannot handle
@@ -211,11 +215,11 @@ void CallOrConstructBuiltinsAssembler::CallOrConstructWithArrayLike(
     {
       if (new_target == nullptr) {
         Callable callable = CodeFactory::CallVarargs(isolate());
-        TailCallStub(callable, context, target, args_count, elements, length);
+        TailCallStub(callable, context, target, args_count, length, elements);
       } else {
         Callable callable = CodeFactory::ConstructVarargs(isolate());
-        TailCallStub(callable, context, target, new_target, args_count,
-                     elements, length);
+        TailCallStub(callable, context, target, new_target, args_count, length,
+                     elements);
       }
     }
 
@@ -228,6 +232,9 @@ void CallOrConstructBuiltinsAssembler::CallOrConstructWithArrayLike(
                                    Int32Constant(HOLEY_DOUBLE_ELEMENTS));
     }
   }
+
+  BIND(&too_many_args);
+  ThrowRangeError(context, MessageTemplate::kTooManyArguments);
 }
 
 // Takes a FixedArray of doubles and creates a new FixedArray with those doubles
@@ -237,49 +244,42 @@ void CallOrConstructBuiltinsAssembler::CallOrConstructDoubleVarargs(
     TNode<Object> target, SloppyTNode<Object> new_target,
     TNode<FixedDoubleArray> elements, TNode<Int32T> length,
     TNode<Int32T> args_count, TNode<Context> context, TNode<Int32T> kind) {
-  Label if_done(this);
-
   const ElementsKind new_kind = PACKED_ELEMENTS;
   const WriteBarrierMode barrier_mode = UPDATE_WRITE_BARRIER;
+
+  Label too_many_args(this, Label::kDeferred);
+  GotoIf(Int32GreaterThan(length, Int32Constant(Code::kMaxArguments)),
+         &too_many_args);
+
   TNode<IntPtrT> intptr_length = ChangeInt32ToIntPtr(length);
   CSA_ASSERT(this, WordNotEqual(intptr_length, IntPtrConstant(0)));
 
   // Allocate a new FixedArray of Objects.
   TNode<FixedArray> new_elements = CAST(AllocateFixedArray(
       new_kind, intptr_length, CodeStubAssembler::kAllowLargeObjectAllocation));
-  Branch(Word32Equal(kind, Int32Constant(HOLEY_DOUBLE_ELEMENTS)),
-         [&] {
-           // Fill the FixedArray with pointers to HeapObjects.
-           CopyFixedArrayElements(HOLEY_DOUBLE_ELEMENTS, elements, new_kind,
-                                  new_elements, intptr_length, intptr_length,
-                                  barrier_mode);
-           Goto(&if_done);
-         },
-         [&] {
-           CopyFixedArrayElements(PACKED_DOUBLE_ELEMENTS, elements, new_kind,
-                                  new_elements, intptr_length, intptr_length,
-                                  barrier_mode);
-           Goto(&if_done);
-         });
-
-  BIND(&if_done);
-  {
-    if (new_target == nullptr) {
-      Callable callable = CodeFactory::CallVarargs(isolate());
-      TailCallStub(callable, context, target, args_count, new_elements, length);
-    } else {
-      Callable callable = CodeFactory::ConstructVarargs(isolate());
-      TailCallStub(callable, context, target, new_target, args_count,
-                   new_elements, length);
-    }
+  // CopyFixedArrayElements does not distinguish between holey and packed for
+  // its first argument, so we don't need to dispatch on {kind} here.
+  CopyFixedArrayElements(PACKED_DOUBLE_ELEMENTS, elements, new_kind,
+                         new_elements, intptr_length, intptr_length,
+                         barrier_mode);
+  if (new_target == nullptr) {
+    Callable callable = CodeFactory::CallVarargs(isolate());
+    TailCallStub(callable, context, target, args_count, length, new_elements);
+  } else {
+    Callable callable = CodeFactory::ConstructVarargs(isolate());
+    TailCallStub(callable, context, target, new_target, args_count, length,
+                 new_elements);
   }
+
+  BIND(&too_many_args);
+  ThrowRangeError(context, MessageTemplate::kTooManyArguments);
 }
 
 void CallOrConstructBuiltinsAssembler::CallOrConstructWithSpread(
     TNode<Object> target, TNode<Object> new_target, TNode<Object> spread,
     TNode<Int32T> args_count, TNode<Context> context) {
   Label if_smiorobject(this), if_double(this),
-      if_generic(this, Label::kDeferred);
+      if_generic(this, Label::kDeferred), too_many_args(this, Label::kDeferred);
 
   TVARIABLE(Int32T, var_length);
   TVARIABLE(FixedArrayBase, var_elements);
@@ -299,7 +299,7 @@ void CallOrConstructBuiltinsAssembler::CallOrConstructWithSpread(
   // Check that the Array.prototype hasn't been modified in a way that would
   // affect iteration.
   TNode<PropertyCell> protector_cell =
-      CAST(LoadRoot(Heap::kArrayIteratorProtectorRootIndex));
+      CAST(LoadRoot(RootIndex::kArrayIteratorProtector));
   GotoIf(WordEqual(LoadObjectField(protector_cell, PropertyCell::kValueOffset),
                    SmiConstant(Isolate::kProtectorInvalid)),
          &if_generic);
@@ -325,8 +325,9 @@ void CallOrConstructBuiltinsAssembler::CallOrConstructWithSpread(
     TNode<Object> iterator_fn =
         GetProperty(context, spread, IteratorSymbolConstant());
     GotoIfNot(TaggedIsCallable(iterator_fn), &if_iterator_fn_not_callable);
-    TNode<JSArray> list = CAST(
-        CallBuiltin(Builtins::kIterableToList, context, spread, iterator_fn));
+    TNode<JSArray> list =
+        CAST(CallBuiltin(Builtins::kIterableToListMayPreserveHoles, context,
+                         spread, iterator_fn));
     var_length = LoadAndUntagToWord32ObjectField(list, JSArray::kLengthOffset);
 
     var_elements = LoadElements(list);
@@ -344,13 +345,16 @@ void CallOrConstructBuiltinsAssembler::CallOrConstructWithSpread(
     TNode<FixedArrayBase> elements = var_elements.value();
     TNode<Int32T> length = var_length.value();
 
+    GotoIf(Int32GreaterThan(length, Int32Constant(Code::kMaxArguments)),
+           &too_many_args);
+
     if (new_target == nullptr) {
       Callable callable = CodeFactory::CallVarargs(isolate());
-      TailCallStub(callable, context, target, args_count, elements, length);
+      TailCallStub(callable, context, target, args_count, length, elements);
     } else {
       Callable callable = CodeFactory::ConstructVarargs(isolate());
-      TailCallStub(callable, context, target, new_target, args_count, elements,
-                   length);
+      TailCallStub(callable, context, target, new_target, args_count, length,
+                   elements);
     }
   }
 
@@ -361,6 +365,9 @@ void CallOrConstructBuiltinsAssembler::CallOrConstructWithSpread(
                                  var_length.value(), args_count, context,
                                  var_elements_kind.value());
   }
+
+  BIND(&too_many_args);
+  ThrowRangeError(context, MessageTemplate::kTooManyArguments);
 }
 
 TF_BUILTIN(CallWithArrayLike, CallOrConstructBuiltinsAssembler) {

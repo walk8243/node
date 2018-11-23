@@ -30,7 +30,7 @@ Node* SmiTag(CodeAssembler& m, Node* value) {
 }
 
 Node* UndefinedConstant(CodeAssembler& m) {
-  return m.LoadRoot(Heap::kUndefinedValueRootIndex);
+  return m.LoadRoot(RootIndex::kUndefinedValue);
 }
 
 Node* SmiFromInt32(CodeAssembler& m, Node* value) {
@@ -558,6 +558,28 @@ TEST(GotoIfExceptionMultiple) {
                                    isolate->factory()->constructor_string())
           .ToHandleChecked();
   CHECK(constructor->SameValue(*isolate->type_error_function()));
+}
+
+TEST(ExceptionHandler) {
+  Isolate* isolate(CcTest::InitIsolateOnce());
+  const int kNumParams = 0;
+  CodeAssemblerTester asm_tester(isolate, kNumParams);
+  CodeAssembler m(asm_tester.state());
+
+  CodeAssembler::TVariable<Object> var(m.SmiConstant(0), &m);
+  Label exception(&m, {&var}, Label::kDeferred);
+  {
+    CodeAssemblerScopedExceptionHandler handler(&m, &exception, &var);
+    Node* context = m.HeapConstant(Handle<Context>(isolate->native_context()));
+    m.CallRuntime(Runtime::kThrow, context, m.SmiConstant(2));
+  }
+  m.Return(m.SmiConstant(1));
+
+  m.Bind(&exception);
+  m.Return(var.value());
+
+  FunctionTester ft(asm_tester.GenerateCode(), kNumParams);
+  CHECK_EQ(2, ft.CallChecked<Smi>()->value());
 }
 
 }  // namespace compiler

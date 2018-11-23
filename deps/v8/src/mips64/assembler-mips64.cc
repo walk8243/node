@@ -40,6 +40,7 @@
 #include "src/code-stubs.h"
 #include "src/deoptimizer.h"
 #include "src/mips64/assembler-mips64-inl.h"
+#include "src/string-constants.h"
 
 namespace v8 {
 namespace internal {
@@ -183,18 +184,6 @@ int RelocInfo::GetDeoptimizationId(Isolate* isolate, DeoptimizeKind kind) {
   return Deoptimizer::GetDeoptimizationId(isolate, target_address(), kind);
 }
 
-void RelocInfo::set_js_to_wasm_address(Address address,
-                                       ICacheFlushMode icache_flush_mode) {
-  DCHECK_EQ(rmode_, JS_TO_WASM_CALL);
-  Assembler::set_target_address_at(pc_, constant_pool_, address,
-                                   icache_flush_mode);
-}
-
-Address RelocInfo::js_to_wasm_address() const {
-  DCHECK_EQ(rmode_, JS_TO_WASM_CALL);
-  return Assembler::target_address_at(pc_, constant_pool_);
-}
-
 uint32_t RelocInfo::wasm_call_tag() const {
   DCHECK(rmode_ == WASM_CALL || rmode_ == WASM_STUB_CALL);
   return static_cast<uint32_t>(
@@ -226,6 +215,13 @@ Operand Operand::EmbeddedCode(CodeStub* stub) {
   return result;
 }
 
+Operand Operand::EmbeddedStringConstant(const StringConstantBase* str) {
+  Operand result(0, RelocInfo::EMBEDDED_OBJECT);
+  result.is_heap_object_request_ = true;
+  result.value_.heap_object_request = HeapObjectRequest(str);
+  return result;
+}
+
 MemOperand::MemOperand(Register rm, int32_t offset) : Operand(rm) {
   offset_ = offset;
 }
@@ -238,6 +234,7 @@ MemOperand::MemOperand(Register rm, int32_t unit, int32_t multiplier,
 }
 
 void Assembler::AllocateAndInstallRequestedHeapObjects(Isolate* isolate) {
+  DCHECK_IMPLIES(isolate == nullptr, heap_object_requests_.empty());
   for (auto& request : heap_object_requests_) {
     Handle<HeapObject> object;
     switch (request.kind()) {
@@ -248,6 +245,11 @@ void Assembler::AllocateAndInstallRequestedHeapObjects(Isolate* isolate) {
       case HeapObjectRequest::kCodeStub:
         request.code_stub()->set_isolate(isolate);
         object = request.code_stub()->GetCode();
+        break;
+      case HeapObjectRequest::kStringConstant:
+        const StringConstantBase* str = request.string();
+        CHECK_NOT_NULL(str);
+        object = str->AllocateStringConstant(isolate);
         break;
     }
     Address pc = reinterpret_cast<Address>(buffer_) + request.offset();
@@ -885,7 +887,7 @@ void Assembler::target_at_put(int pos, int target_pos, bool is_internal) {
   if ((instr & ~kImm16Mask) == 0) {
     DCHECK(target_pos == kEndOfChain || target_pos >= 0);
     // Emitted label constant, not part of a branch.
-    // Make label relative to Code* of generated Code object.
+    // Make label relative to Code pointer of generated Code object.
     instr_at_put(pos, target_pos + (Code::kHeaderSize - kHeapObjectTag));
     return;
   }
@@ -1819,35 +1821,25 @@ void Assembler::bnezc(Register rs, int32_t offset) {
 
 
 void Assembler::j(int64_t target) {
-  BlockTrampolinePoolScope block_trampoline_pool(this);
-  GenInstrJump(J, static_cast<uint32_t>(target >> 2) & kImm26Mask);
-  BlockTrampolinePoolFor(1);  // For associated delay slot.
+  // Deprecated. Use PC-relative jumps instead.
+  UNREACHABLE();
 }
 
 
 void Assembler::j(Label* target) {
-  uint64_t imm = jump_offset(target);
-  if (target->is_bound()) {
-    BlockTrampolinePoolScope block_trampoline_pool(this);
-    GenInstrJump(static_cast<Opcode>(kJRawMark),
-                 static_cast<uint32_t>(imm >> 2) & kImm26Mask);
-    BlockTrampolinePoolFor(1);  // For associated delay slot.
-  } else {
-    j(imm);
-  }
+  // Deprecated. Use PC-relative jumps instead.
+  UNREACHABLE();
 }
 
 
 void Assembler::jal(Label* target) {
-  uint64_t imm = jump_offset(target);
-  if (target->is_bound()) {
-    BlockTrampolinePoolScope block_trampoline_pool(this);
-    GenInstrJump(static_cast<Opcode>(kJalRawMark),
-                 static_cast<uint32_t>(imm >> 2) & kImm26Mask);
-    BlockTrampolinePoolFor(1);  // For associated delay slot.
-  } else {
-    jal(imm);
-  }
+  // Deprecated. Use PC-relative jumps instead.
+  UNREACHABLE();
+}
+
+void Assembler::jal(int64_t target) {
+  // Deprecated. Use PC-relative jumps instead.
+  UNREACHABLE();
 }
 
 
@@ -1859,13 +1851,6 @@ void Assembler::jr(Register rs) {
   } else {
     jalr(rs, zero_reg);
   }
-}
-
-
-void Assembler::jal(int64_t target) {
-  BlockTrampolinePoolScope block_trampoline_pool(this);
-  GenInstrJump(JAL, static_cast<uint32_t>(target >> 2) & kImm26Mask);
-  BlockTrampolinePoolFor(1);  // For associated delay slot.
 }
 
 
@@ -4218,18 +4203,11 @@ void Assembler::dd(Label* label) {
 
 
 void Assembler::RecordRelocInfo(RelocInfo::Mode rmode, intptr_t data) {
+  if (!ShouldRecordRelocInfo(rmode)) return;
   // We do not try to reuse pool constants.
-  RelocInfo rinfo(reinterpret_cast<Address>(pc_), rmode, data, nullptr);
-  if (!RelocInfo::IsNone(rinfo.rmode())) {
-    if (options().disable_reloc_info_for_patching) return;
-    // Don't record external references unless the heap will be serialized.
-    if (RelocInfo::IsOnlyForSerializer(rmode) &&
-        !options().record_reloc_info_for_serialization && !emit_debug_code()) {
-      return;
-    }
-    DCHECK_GE(buffer_space(), kMaxRelocSize);  // Too late to grow buffer here.
-    reloc_info_writer.Write(&rinfo);
-  }
+  RelocInfo rinfo(reinterpret_cast<Address>(pc_), rmode, data, Code());
+  DCHECK_GE(buffer_space(), kMaxRelocSize);  // Too late to grow buffer here.
+  reloc_info_writer.Write(&rinfo);
 }
 
 

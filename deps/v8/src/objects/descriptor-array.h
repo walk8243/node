@@ -18,6 +18,7 @@ template <typename T>
 class Handle;
 
 class Isolate;
+class MaybeObjectSlot;
 
 // An EnumCache is a pair used to hold keys and indices caches.
 class EnumCache : public Tuple2 {
@@ -68,17 +69,17 @@ class DescriptorArray : public WeakFixedArray {
 
   // Accessors for fetching instance descriptor at descriptor number.
   inline Name* GetKey(int descriptor_number);
-  inline Object** GetKeySlot(int descriptor_number);
+  inline ObjectSlot GetKeySlot(int descriptor_number);
   inline Object* GetStrongValue(int descriptor_number);
   inline void SetValue(int descriptor_number, Object* value);
-  inline MaybeObject* GetValue(int descriptor_number);
-  inline MaybeObject** GetValueSlot(int descriptor_number);
+  inline MaybeObject GetValue(int descriptor_number);
+  inline MaybeObjectSlot GetValueSlot(int descriptor_number);
   static inline int GetValueOffset(int descriptor_number);
-  inline MaybeObject** GetDescriptorStartSlot(int descriptor_number);
-  inline MaybeObject** GetDescriptorEndSlot(int descriptor_number);
+  inline MaybeObjectSlot GetDescriptorStartSlot(int descriptor_number);
+  inline MaybeObjectSlot GetDescriptorEndSlot(int descriptor_number);
   inline PropertyDetails GetDetails(int descriptor_number);
   inline int GetFieldIndex(int descriptor_number);
-  inline FieldType* GetFieldType(int descriptor_number);
+  inline FieldType GetFieldType(int descriptor_number);
 
   inline Name* GetSortedKey(int descriptor_number);
   inline int GetSortedKeyIndex(int descriptor_number);
@@ -86,7 +87,7 @@ class DescriptorArray : public WeakFixedArray {
 
   // Accessor for complete descriptor.
   inline void Set(int descriptor_number, Descriptor* desc);
-  inline void Set(int descriptor_number, Name* key, MaybeObject* value,
+  inline void Set(int descriptor_number, Name* key, MaybeObject value,
                   PropertyDetails details);
   void Replace(int descriptor_number, Descriptor* descriptor);
 
@@ -116,11 +117,11 @@ class DescriptorArray : public WeakFixedArray {
 
   // Search the instance descriptors for given name.
   V8_INLINE int Search(Name* name, int number_of_own_descriptors);
-  V8_INLINE int Search(Name* name, Map* map);
+  V8_INLINE int Search(Name* name, Map map);
 
   // As the above, but uses DescriptorLookupCache and updates it when
   // necessary.
-  V8_INLINE int SearchWithCache(Isolate* isolate, Name* name, Map* map);
+  V8_INLINE int SearchWithCache(Isolate* isolate, Name* name, Map map);
 
   bool IsEqualUpTo(DescriptorArray* desc, int nof_descriptors);
 
@@ -140,9 +141,15 @@ class DescriptorArray : public WeakFixedArray {
   static const int kFirstIndex = 2;
 
   // Layout description.
-  static const int kDescriptorLengthOffset = FixedArray::kHeaderSize;
-  static const int kEnumCacheOffset = kDescriptorLengthOffset + kPointerSize;
-  static const int kFirstOffset = kEnumCacheOffset + kPointerSize;
+#define DESCRIPTOR_ARRAY_FIELDS(V)        \
+  V(kDescriptorLengthOffset, kTaggedSize) \
+  V(kEnumCacheOffset, kTaggedSize)        \
+  /* Header size. */                      \
+  V(kFirstOffset, 0)
+
+  DEFINE_FIELD_OFFSET_CONSTANTS(FixedArray::kHeaderSize,
+                                DESCRIPTOR_ARRAY_FIELDS)
+#undef DESCRIPTOR_ARRAY_FIELDS
 
   // Layout of descriptor.
   // Naming is consistent with Dictionary classes for easy templating.
@@ -187,8 +194,8 @@ class DescriptorArray : public WeakFixedArray {
   }
 
  private:
-  inline MaybeObject* get(int index) const;
-  inline void set(int index, MaybeObject* value);
+  inline MaybeObject get(int index) const;
+  inline void set(int index, MaybeObject value);
 
   // Transfer a complete descriptor from the src descriptor array to this
   // descriptor array.

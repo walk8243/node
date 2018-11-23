@@ -7,6 +7,7 @@
 
 #include "src/allocation.h"
 #include "src/handles.h"
+#include "src/objects/heap-object.h"
 #include "src/vector.h"
 
 namespace v8 {
@@ -17,7 +18,7 @@ class ByteArray;
 
 class StringAllocator {
  public:
-  virtual ~StringAllocator() { }
+  virtual ~StringAllocator() = default;
   // Allocate a number of bytes.
   virtual char* allocate(unsigned bytes) = 0;
   // Allocate a larger number of bytes and copy the old buffer to the new one.
@@ -31,7 +32,7 @@ class StringAllocator {
 // Normal allocator uses new[] and delete[].
 class HeapStringAllocator final : public StringAllocator {
  public:
-  ~HeapStringAllocator() { DeleteArray(space_); }
+  ~HeapStringAllocator() override { DeleteArray(space_); }
   char* allocate(unsigned bytes) override;
   char* grow(unsigned* bytes) override;
 
@@ -44,7 +45,8 @@ class FixedStringAllocator final : public StringAllocator {
  public:
   FixedStringAllocator(char* buffer, unsigned length)
       : buffer_(buffer), length_(length) {}
-  ~FixedStringAllocator() override{};
+  ~FixedStringAllocator() override = default;
+
   char* allocate(unsigned bytes) override;
   char* grow(unsigned* bytes) override;
 
@@ -72,6 +74,9 @@ class StringStream final {
     FmtElm(Object* value) : FmtElm(OBJ) {  // NOLINT
       data_.u_obj_ = value;
     }
+    FmtElm(ObjectPtr value) : FmtElm(OBJ) {  // NOLINT
+      data_.u_obj_ = reinterpret_cast<Object*>(value.ptr());
+    }
     FmtElm(Handle<Object> value) : FmtElm(HANDLE) {  // NOLINT
       data_.u_handle_ = value.location();
     }
@@ -96,7 +101,7 @@ class StringStream final {
       const char* u_c_str_;
       const Vector<const uc16>* u_lc_str_;
       Object* u_obj_;
-      Object** u_handle_;
+      Address* u_handle_;
       void* u_pointer_;
     } data_;
   };
@@ -146,7 +151,7 @@ class StringStream final {
   void PrintPrototype(JSFunction* fun, Object* receiver);
   void PrintSecurityTokenIfChanged(JSFunction* function);
   // NOTE: Returns the code in the output parameter.
-  void PrintFunction(JSFunction* function, Object* receiver, Code** code);
+  void PrintFunction(JSFunction* function, Object* receiver, Code* code);
 
   // Reset the stream.
   void Reset() {

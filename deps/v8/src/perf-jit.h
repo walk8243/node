@@ -39,7 +39,7 @@ namespace internal {
 class PerfJitLogger : public CodeEventLogger {
  public:
   explicit PerfJitLogger(Isolate* isolate);
-  virtual ~PerfJitLogger();
+  ~PerfJitLogger() override;
 
   void CodeMoveEvent(AbstractCode* from, AbstractCode* to) override;
   void CodeDisableOptEvent(AbstractCode* code,
@@ -70,8 +70,8 @@ class PerfJitLogger : public CodeEventLogger {
 
   void LogWriteBytes(const char* bytes, int size);
   void LogWriteHeader();
-  void LogWriteDebugInfo(Code* code, SharedFunctionInfo* shared);
-  void LogWriteUnwindingInfo(Code* code);
+  void LogWriteDebugInfo(Code code, SharedFunctionInfo* shared);
+  void LogWriteUnwindingInfo(Code code);
 
   static const uint32_t kElfMachIA32 = 3;
   static const uint32_t kElfMachX64 = 62;

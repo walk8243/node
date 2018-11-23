@@ -6,6 +6,7 @@
 #include "src/assembler-inl.h"
 #include "src/heap/factory.h"
 #include "src/isolate.h"
+#include "src/objects/smi.h"
 #include "test/cctest/cctest.h"
 #include "test/cctest/heap/heap-tester.h"
 #include "test/cctest/heap/heap-utils.h"
@@ -42,7 +43,7 @@ TEST(WeakReferencesBasic) {
       CreateFeedbackVectorForTest(CcTest::isolate(), factory);
   CHECK(Heap::InNewSpace(*fv));
 
-  MaybeObject* code_object = fv->optimized_code_weak_or_smi();
+  MaybeObject code_object = fv->optimized_code_weak_or_smi();
   CHECK(code_object->IsSmi());
   CcTest::CollectAllGarbage();
   CHECK(Heap::InNewSpace(*fv));
@@ -62,19 +63,19 @@ TEST(WeakReferencesBasic) {
 
     fv->set_optimized_code_weak_or_smi(HeapObjectReference::Weak(*code));
     HeapObject* code_heap_object;
-    CHECK(
-        fv->optimized_code_weak_or_smi()->ToWeakHeapObject(&code_heap_object));
+    CHECK(fv->optimized_code_weak_or_smi()->GetHeapObjectIfWeak(
+        &code_heap_object));
     CHECK_EQ(*code, code_heap_object);
 
     CcTest::CollectAllGarbage();
 
-    CHECK(
-        fv->optimized_code_weak_or_smi()->ToWeakHeapObject(&code_heap_object));
+    CHECK(fv->optimized_code_weak_or_smi()->GetHeapObjectIfWeak(
+        &code_heap_object));
     CHECK_EQ(*code, code_heap_object);
   }  // code will go out of scope.
 
   CcTest::CollectAllGarbage();
-  CHECK(fv->optimized_code_weak_or_smi()->IsClearedWeakHeapObject());
+  CHECK(fv->optimized_code_weak_or_smi()->IsCleared());
 }
 
 TEST(WeakReferencesOldToOld) {
@@ -103,7 +104,7 @@ TEST(WeakReferencesOldToOld) {
   CHECK(heap->InOldSpace(*fixed_array));
 
   HeapObject* heap_object;
-  CHECK(fv->optimized_code_weak_or_smi()->ToWeakHeapObject(&heap_object));
+  CHECK(fv->optimized_code_weak_or_smi()->GetHeapObjectIfWeak(&heap_object));
   CHECK_EQ(heap_object, *fixed_array);
 }
 
@@ -128,7 +129,7 @@ TEST(WeakReferencesOldToNew) {
   CcTest::CollectAllGarbage();
 
   HeapObject* heap_object;
-  CHECK(fv->optimized_code_weak_or_smi()->ToWeakHeapObject(&heap_object));
+  CHECK(fv->optimized_code_weak_or_smi()->GetHeapObjectIfWeak(&heap_object));
   CHECK_EQ(heap_object, *fixed_array);
 }
 
@@ -153,7 +154,7 @@ TEST(WeakReferencesOldToNewScavenged) {
   CcTest::CollectGarbage(NEW_SPACE);
 
   HeapObject* heap_object;
-  CHECK(fv->optimized_code_weak_or_smi()->ToWeakHeapObject(&heap_object));
+  CHECK(fv->optimized_code_weak_or_smi()->GetHeapObjectIfWeak(&heap_object));
   CHECK_EQ(heap_object, *fixed_array);
 }
 
@@ -171,10 +172,11 @@ TEST(WeakReferencesOldToCleared) {
   Handle<FeedbackVector> fv =
       CreateFeedbackVectorForTest(CcTest::isolate(), factory, TENURED);
   CHECK(heap->InOldSpace(*fv));
-  fv->set_optimized_code_weak_or_smi(HeapObjectReference::ClearedValue());
+  fv->set_optimized_code_weak_or_smi(
+      HeapObjectReference::ClearedValue(isolate));
 
   CcTest::CollectAllGarbage();
-  CHECK(fv->optimized_code_weak_or_smi()->IsClearedWeakHeapObject());
+  CHECK(fv->optimized_code_weak_or_smi()->IsCleared());
 }
 
 TEST(ObjectMovesBeforeClearingWeakField) {
@@ -210,11 +212,11 @@ TEST(ObjectMovesBeforeClearingWeakField) {
   CcTest::CollectGarbage(NEW_SPACE);
   FeedbackVector* new_fv_location = *fv;
   CHECK_NE(fv_location, new_fv_location);
-  CHECK(fv->optimized_code_weak_or_smi()->IsWeakHeapObject());
+  CHECK(fv->optimized_code_weak_or_smi()->IsWeak());
 
   // Now we try to clear *fv.
   CcTest::CollectAllGarbage();
-  CHECK(fv->optimized_code_weak_or_smi()->IsClearedWeakHeapObject());
+  CHECK(fv->optimized_code_weak_or_smi()->IsCleared());
 }
 
 TEST(ObjectWithWeakFieldDies) {
@@ -277,7 +279,7 @@ TEST(ObjectWithWeakReferencePromoted) {
   CHECK(heap->InOldSpace(*fixed_array));
 
   HeapObject* heap_object;
-  CHECK(fv->optimized_code_weak_or_smi()->ToWeakHeapObject(&heap_object));
+  CHECK(fv->optimized_code_weak_or_smi()->GetHeapObjectIfWeak(&heap_object));
   CHECK_EQ(heap_object, *fixed_array);
 }
 
@@ -292,18 +294,19 @@ TEST(ObjectWithClearedWeakReferencePromoted) {
       CreateFeedbackVectorForTest(CcTest::isolate(), factory);
   CHECK(Heap::InNewSpace(*fv));
 
-  fv->set_optimized_code_weak_or_smi(HeapObjectReference::ClearedValue());
+  fv->set_optimized_code_weak_or_smi(
+      HeapObjectReference::ClearedValue(isolate));
 
   CcTest::CollectGarbage(NEW_SPACE);
   CHECK(Heap::InNewSpace(*fv));
-  CHECK(fv->optimized_code_weak_or_smi()->IsClearedWeakHeapObject());
+  CHECK(fv->optimized_code_weak_or_smi()->IsCleared());
 
   CcTest::CollectGarbage(NEW_SPACE);
   CHECK(heap->InOldSpace(*fv));
-  CHECK(fv->optimized_code_weak_or_smi()->IsClearedWeakHeapObject());
+  CHECK(fv->optimized_code_weak_or_smi()->IsCleared());
 
   CcTest::CollectAllGarbage();
-  CHECK(fv->optimized_code_weak_or_smi()->IsClearedWeakHeapObject());
+  CHECK(fv->optimized_code_weak_or_smi()->IsCleared());
 }
 
 TEST(WeakReferenceWriteBarrier) {
@@ -343,7 +346,7 @@ TEST(WeakReferenceWriteBarrier) {
   CcTest::CollectAllGarbage();
 
   // Check that the write barrier treated the weak reference as strong.
-  CHECK(fv->optimized_code_weak_or_smi()->IsWeakHeapObject());
+  CHECK(fv->optimized_code_weak_or_smi()->IsWeak());
 }
 
 TEST(EmptyWeakArray) {
@@ -375,7 +378,7 @@ TEST(WeakArraysBasic) {
 
   for (int i = 0; i < length; ++i) {
     HeapObject* heap_object;
-    CHECK(array->Get(i)->ToStrongHeapObject(&heap_object));
+    CHECK(array->Get(i)->GetHeapObjectIfStrong(&heap_object));
     CHECK_EQ(heap_object, ReadOnlyRoots(heap).undefined_value());
   }
 
@@ -407,23 +410,23 @@ TEST(WeakArraysBasic) {
   // space.
   CcTest::CollectGarbage(NEW_SPACE);
   HeapObject* heap_object;
-  CHECK(array->Get(0)->ToWeakHeapObject(&heap_object));
+  CHECK(array->Get(0)->GetHeapObjectIfWeak(&heap_object));
   CHECK_EQ(Smi::cast(FixedArray::cast(heap_object)->get(0))->value(), 2016);
-  CHECK(array->Get(1)->ToWeakHeapObject(&heap_object));
+  CHECK(array->Get(1)->GetHeapObjectIfWeak(&heap_object));
   CHECK_EQ(Smi::cast(FixedArray::cast(heap_object)->get(0))->value(), 2017);
-  CHECK(array->Get(2)->ToStrongHeapObject(&heap_object));
+  CHECK(array->Get(2)->GetHeapObjectIfStrong(&heap_object));
   CHECK_EQ(Smi::cast(FixedArray::cast(heap_object)->get(0))->value(), 2018);
-  CHECK(array->Get(3)->ToWeakHeapObject(&heap_object));
+  CHECK(array->Get(3)->GetHeapObjectIfWeak(&heap_object));
   CHECK_EQ(Smi::cast(FixedArray::cast(heap_object)->get(0))->value(), 2019);
 
   CcTest::CollectAllGarbage();
   CHECK(heap->InOldSpace(*array));
-  CHECK(array->Get(0)->IsClearedWeakHeapObject());
-  CHECK(array->Get(1)->ToWeakHeapObject(&heap_object));
+  CHECK(array->Get(0)->IsCleared());
+  CHECK(array->Get(1)->GetHeapObjectIfWeak(&heap_object));
   CHECK_EQ(Smi::cast(FixedArray::cast(heap_object)->get(0))->value(), 2017);
-  CHECK(array->Get(2)->ToStrongHeapObject(&heap_object));
+  CHECK(array->Get(2)->GetHeapObjectIfStrong(&heap_object));
   CHECK_EQ(Smi::cast(FixedArray::cast(heap_object)->get(0))->value(), 2018);
-  CHECK(array->Get(3)->IsClearedWeakHeapObject());
+  CHECK(array->Get(3)->IsCleared());
 }
 
 TEST(WeakArrayListBasic) {
@@ -481,13 +484,13 @@ TEST(WeakArrayListBasic) {
     CHECK(Heap::InNewSpace(*array));
 
     CHECK_EQ(array->Get(0), HeapObjectReference::Weak(*index0));
-    CHECK_EQ(Smi::ToInt(array->Get(1)->ToSmi()), 1);
+    CHECK_EQ(array->Get(1).ToSmi().value(), 1);
 
     CHECK_EQ(array->Get(2), HeapObjectReference::Weak(*index2));
-    CHECK_EQ(Smi::ToInt(array->Get(3)->ToSmi()), 3);
+    CHECK_EQ(array->Get(3).ToSmi().value(), 3);
 
     CHECK_EQ(array->Get(4), HeapObjectReference::Weak(*index4));
-    CHECK_EQ(Smi::ToInt(array->Get(5)->ToSmi()), 5);
+    CHECK_EQ(array->Get(5).ToSmi().value(), 5);
 
     CHECK_EQ(array->Get(6), HeapObjectReference::Weak(*index6));
     array = inner_scope.CloseAndEscape(array);
@@ -502,37 +505,37 @@ TEST(WeakArrayListBasic) {
   CcTest::CollectGarbage(NEW_SPACE);
   HeapObject* heap_object;
   CHECK_EQ(array->length(), 8);
-  CHECK(array->Get(0)->ToWeakHeapObject(&heap_object));
+  CHECK(array->Get(0)->GetHeapObjectIfWeak(&heap_object));
   CHECK_EQ(Smi::cast(FixedArray::cast(heap_object)->get(0))->value(), 2016);
-  CHECK_EQ(Smi::ToInt(array->Get(1)->ToSmi()), 1);
+  CHECK_EQ(array->Get(1).ToSmi().value(), 1);
 
-  CHECK(array->Get(2)->ToWeakHeapObject(&heap_object));
+  CHECK(array->Get(2)->GetHeapObjectIfWeak(&heap_object));
   CHECK_EQ(Smi::cast(FixedArray::cast(heap_object)->get(0))->value(), 2017);
-  CHECK_EQ(Smi::ToInt(array->Get(3)->ToSmi()), 3);
+  CHECK_EQ(array->Get(3).ToSmi().value(), 3);
 
-  CHECK(array->Get(4)->ToWeakHeapObject(&heap_object));
+  CHECK(array->Get(4)->GetHeapObjectIfWeak(&heap_object));
   CHECK_EQ(Smi::cast(FixedArray::cast(heap_object)->get(0))->value(), 2018);
-  CHECK_EQ(Smi::ToInt(array->Get(5)->ToSmi()), 5);
+  CHECK_EQ(array->Get(5).ToSmi().value(), 5);
 
-  CHECK(array->Get(6)->ToWeakHeapObject(&heap_object));
+  CHECK(array->Get(6)->GetHeapObjectIfWeak(&heap_object));
   CHECK_EQ(Smi::cast(FixedArray::cast(heap_object)->get(0))->value(), 2019);
-  CHECK_EQ(Smi::ToInt(array->Get(7)->ToSmi()), 7);
+  CHECK_EQ(array->Get(7).ToSmi().value(), 7);
 
   CcTest::CollectAllGarbage();
   CHECK(heap->InOldSpace(*array));
   CHECK_EQ(array->length(), 8);
-  CHECK(array->Get(0)->IsClearedWeakHeapObject());
-  CHECK_EQ(Smi::ToInt(array->Get(1)->ToSmi()), 1);
+  CHECK(array->Get(0)->IsCleared());
+  CHECK_EQ(array->Get(1).ToSmi().value(), 1);
 
-  CHECK(array->Get(2)->ToWeakHeapObject(&heap_object));
+  CHECK(array->Get(2)->GetHeapObjectIfWeak(&heap_object));
   CHECK_EQ(Smi::cast(FixedArray::cast(heap_object)->get(0))->value(), 2017);
-  CHECK_EQ(Smi::ToInt(array->Get(3)->ToSmi()), 3);
+  CHECK_EQ(array->Get(3).ToSmi().value(), 3);
 
-  CHECK(array->Get(4)->IsClearedWeakHeapObject());
-  CHECK_EQ(Smi::ToInt(array->Get(5)->ToSmi()), 5);
+  CHECK(array->Get(4)->IsCleared());
+  CHECK_EQ(array->Get(5).ToSmi().value(), 5);
 
-  CHECK(array->Get(6)->IsClearedWeakHeapObject());
-  CHECK_EQ(Smi::ToInt(array->Get(7)->ToSmi()), 7);
+  CHECK(array->Get(6)->IsCleared());
+  CHECK_EQ(array->Get(7).ToSmi().value(), 7);
 }
 
 TEST(WeakArrayListRemove) {
@@ -753,7 +756,7 @@ TEST(PrototypeUsersCompacted) {
 
   PrototypeUsers::MarkSlotEmpty(*array, 1);
   CcTest::CollectAllGarbage();
-  CHECK(array->Get(3)->IsClearedWeakHeapObject());
+  CHECK(array->Get(3)->IsCleared());
 
   CHECK_EQ(array->length(), 3 + PrototypeUsers::kFirstIndex);
   WeakArrayList* new_array =

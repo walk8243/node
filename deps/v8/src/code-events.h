@@ -9,6 +9,7 @@
 
 #include "src/base/platform/mutex.h"
 #include "src/globals.h"
+#include "src/objects/code.h"
 #include "src/vector.h"
 
 namespace v8 {
@@ -66,7 +67,7 @@ class CodeEventListener {
   };
 #undef DECLARE_ENUM
 
-  virtual ~CodeEventListener() {}
+  virtual ~CodeEventListener() = default;
 
   virtual void CodeCreateEvent(LogEventsAndTags tag, AbstractCode* code,
                                const char* comment) = 0;
@@ -88,7 +89,7 @@ class CodeEventListener {
   virtual void CodeMovingGCEvent() = 0;
   virtual void CodeDisableOptEvent(AbstractCode* code,
                                    SharedFunctionInfo* shared) = 0;
-  virtual void CodeDeoptEvent(Code* code, DeoptimizeKind kind, Address pc,
+  virtual void CodeDeoptEvent(Code code, DeoptimizeKind kind, Address pc,
                               int fp_to_sp_delta) = 0;
 
   virtual bool is_listening_to_code_events() { return false; }
@@ -98,14 +99,14 @@ class CodeEventDispatcher {
  public:
   using LogEventsAndTags = CodeEventListener::LogEventsAndTags;
 
-  CodeEventDispatcher() {}
+  CodeEventDispatcher() = default;
 
   bool AddListener(CodeEventListener* listener) {
-    base::LockGuard<base::Mutex> guard(&mutex_);
+    base::MutexGuard guard(&mutex_);
     return listeners_.insert(listener).second;
   }
   void RemoveListener(CodeEventListener* listener) {
-    base::LockGuard<base::Mutex> guard(&mutex_);
+    base::MutexGuard guard(&mutex_);
     listeners_.erase(listener);
   }
   bool IsListeningToCodeEvents() {
@@ -117,8 +118,8 @@ class CodeEventDispatcher {
     return false;
   }
 
-#define CODE_EVENT_DISPATCH(code)              \
-  base::LockGuard<base::Mutex> guard(&mutex_); \
+#define CODE_EVENT_DISPATCH(code)  \
+  base::MutexGuard guard(&mutex_); \
   for (auto it = listeners_.begin(); it != listeners_.end(); ++it) (*it)->code
 
   void CodeCreateEvent(LogEventsAndTags tag, AbstractCode* code,
@@ -164,7 +165,7 @@ class CodeEventDispatcher {
   void CodeDisableOptEvent(AbstractCode* code, SharedFunctionInfo* shared) {
     CODE_EVENT_DISPATCH(CodeDisableOptEvent(code, shared));
   }
-  void CodeDeoptEvent(Code* code, DeoptimizeKind kind, Address pc,
+  void CodeDeoptEvent(Code code, DeoptimizeKind kind, Address pc,
                       int fp_to_sp_delta) {
     CODE_EVENT_DISPATCH(CodeDeoptEvent(code, kind, pc, fp_to_sp_delta));
   }

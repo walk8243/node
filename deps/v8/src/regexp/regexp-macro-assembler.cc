@@ -23,10 +23,7 @@ RegExpMacroAssembler::RegExpMacroAssembler(Isolate* isolate, Zone* zone)
       isolate_(isolate),
       zone_(zone) {}
 
-
-RegExpMacroAssembler::~RegExpMacroAssembler() {
-}
-
+RegExpMacroAssembler::~RegExpMacroAssembler() = default;
 
 int RegExpMacroAssembler::CaseInsensitiveCompareUC16(Address byte_offset1,
                                                      Address byte_offset2,
@@ -117,10 +114,7 @@ NativeRegExpMacroAssembler::NativeRegExpMacroAssembler(Isolate* isolate,
                                                        Zone* zone)
     : RegExpMacroAssembler(isolate, zone) {}
 
-
-NativeRegExpMacroAssembler::~NativeRegExpMacroAssembler() {
-}
-
+NativeRegExpMacroAssembler::~NativeRegExpMacroAssembler() = default;
 
 bool NativeRegExpMacroAssembler::CanReadUnaligned() {
   return FLAG_enable_regexp_unaligned_accesses && !slow_safe();
@@ -156,10 +150,9 @@ const byte* NativeRegExpMacroAssembler::StringCharacterPosition(
   }
 }
 
-
 int NativeRegExpMacroAssembler::CheckStackGuardState(
     Isolate* isolate, int start_index, bool is_direct_call,
-    Address* return_address, Code* re_code, String** subject,
+    Address* return_address, Code re_code, String** subject,
     const byte** input_start, const byte** input_end) {
   DCHECK(re_code->raw_instruction_start() <= *return_address);
   DCHECK(*return_address <= re_code->raw_instruction_end());
@@ -271,16 +264,11 @@ NativeRegExpMacroAssembler::Result NativeRegExpMacroAssembler::Match(
   return res;
 }
 
-
 NativeRegExpMacroAssembler::Result NativeRegExpMacroAssembler::Execute(
-    Code* code,
+    Code code,
     String* input,  // This needs to be the unpacked (sliced, cons) string.
-    int start_offset,
-    const byte* input_start,
-    const byte* input_end,
-    int* output,
-    int output_size,
-    Isolate* isolate) {
+    int start_offset, const byte* input_start, const byte* input_end,
+    int* output, int output_size, Isolate* isolate) {
   // Ensure that the minimum stack has been allocated.
   RegExpStackScope stack_scope(isolate);
   Address stack_base = stack_scope.stack()->stack_base();
