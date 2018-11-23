@@ -126,8 +126,6 @@
 
     'v8_enable_embedded_builtins%': 'true',
 
-    'v8_perf_prof_unwinding_info%': 0,
-
     'v8_enable_fast_mksnapshot%': 0,
   },
 
@@ -215,7 +213,6 @@
       ['v8_enable_embedded_builtins=="true"', {
         'defines': [
           'V8_EMBEDDED_BUILTINS',
-          'V8_EMBEDDED_BYTECODE_HANDLERS',
         ],
       }],
       ['v8_enable_jitless_mode==1', {
